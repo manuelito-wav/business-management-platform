@@ -10,6 +10,7 @@
       "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
     },
     "test": {},
-    "typecheck": {}
+    "typecheck": {},
+    "lint": {}
   }
 }

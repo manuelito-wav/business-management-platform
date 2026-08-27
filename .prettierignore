@@ -1,0 +1,12 @@
+node_modules
+dist
+.next
+.turbo
+coverage
+**/generated/prisma
+pnpm-lock.yaml
+*.tsbuildinfo
+
+# Governance/spec docs use deliberate, hand-maintained structure (see
+# CODESTYLE.md "Documentation": targeted edits only, never bulk rewrites).
+*.md
