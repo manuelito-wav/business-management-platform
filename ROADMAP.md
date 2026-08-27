@@ -109,7 +109,7 @@ or synchronization boundaries.
   - Commit: `chore: bootstrap pnpm workspace and local database` -- done (ec2f6f2)
 - Add strict TypeScript, linting, formatting, commit checks, CI for lint/type
   check/unit tests, and a CODESTYLE.md compatible with the specification.
-  - Commit: `chore: add quality gates and code style`
+  - Commit: `chore: add quality gates and code style` -- done (222223b)
 - Confirm the already-approved product-pricing and foundational invariants
   before building on them: `profit = salePrice - costPrice`, `marginPercent =
   ((salePrice - costPrice) / costPrice) * 100` (D-006/D-007), the zero-cost
