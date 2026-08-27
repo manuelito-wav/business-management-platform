@@ -1,0 +1,12 @@
+// This checkpoint only establishes database connectivity (Phase 0 --
+// "bootstrap pnpm workspace and local database"). Domain models are added
+// starting in Phase 1 once identity/tenancy decisions are implemented.
+
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}

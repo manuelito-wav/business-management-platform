@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+.next/
+build/
+
+# Turborepo
+.turbo/
+
+# TypeScript incremental build cache
+*.tsbuildinfo
+
+# Prisma generated client (regenerated via `prisma generate`)
+**/generated/prisma/
+
+# Environment files (never commit real secrets)
+.env
+.env.local
+.env.*.local
+
+# Test / coverage
+coverage/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
