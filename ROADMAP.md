@@ -106,7 +106,7 @@ or synchronization boundaries.
   templates, and development/staging/production configuration conventions.
   Add Redis and S3-compatible services only with the feature milestones that
   need them.
-  - Commit: `chore: bootstrap pnpm workspace and local database`
+  - Commit: `chore: bootstrap pnpm workspace and local database` -- done (ec2f6f2)
 - Add strict TypeScript, linting, formatting, commit checks, CI for lint/type
   check/unit tests, and a CODESTYLE.md compatible with the specification.
   - Commit: `chore: add quality gates and code style`
