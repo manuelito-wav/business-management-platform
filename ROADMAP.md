@@ -122,7 +122,9 @@ or synchronization boundaries.
   second percentage field. Tax/fiscal values remain out of MVP scope and
   pending (see DECISIONS.md "Pending decisions"). Do not begin pricing UI
   until this confirmation is complete.
-  - Commit: `docs: define financial and time invariants`
+  - Commit: `docs: define financial and time invariants` -- confirmed, already
+    recorded in DECISIONS.md D-005/D-006/D-007/D-008/D-032/D-033/D-035/D-036/
+    D-037 (22ebadd)
 - Define module boundaries, dependency direction, REST error envelope,
   pagination/filter conventions, OpenAPI publication, and a versioned command
   envelope for finalized operations. Define which operations produce audit and
