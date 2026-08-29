@@ -136,7 +136,7 @@ or synchronization boundaries.
   are separately indexed and never read on the POS hot path. Configurable/
   operational entities use explicit state fields (for example active/
   inactive) rather than physical deletion, per D-037.
-  - Commit: `docs: define tenant and operational data model`
+  - Commit: `docs: define tenant and operational data model` -- done (72ab4e4)
 - Establish a test-data factory and deterministic clock/ID abstractions for
   domain tests. Seed a kiosk business only for local development.
   - Commit: `test: add deterministic domain test support`
