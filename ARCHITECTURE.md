@@ -68,6 +68,8 @@ Initial modules:
 
 Future modules may include documents, notifications, providers, advanced analytics, AI, and provider administration.
 
+Each module owns its own tables and exposes application services for other modules to call; no module reads or writes another module's tables directly, even for a simple lookup. A module that only needs to coordinate a use case across several modules (for example the sale-settlement transaction in "Financial settlement" below) calls each module's own application-service methods within a shared transaction rather than reaching into their tables itself.
+
 ## Dependency direction
 ```text
 UI / Transport
@@ -150,6 +152,13 @@ Finalized operations carry:
 
 See D-036 for the full `occurredAt`/`recordedAt`/`syncedAt` semantics.
 
+## API conventions
+REST error responses use one envelope: `{ "error": { "code", "message", "correlationId", "details" } }`. `code` is a stable, versioned `SCREAMING_SNAKE_CASE` identifier, never the raw HTTP status text; `correlationId` ties the response to server logs and audit records; `details` is an optional array of field-level validation errors (`{ field, message }`). Internal error messages, stack traces, and secrets are never returned; unexpected failures return a generic `INTERNAL_ERROR` response, logged server-side under the same correlationId. See D-040.
+
+List endpoints use cursor-based pagination (`cursor`, `limit`) returning `{ data, pagination: { nextCursor } }` — not offset/page-number pagination, since audit, sales-history, and reporting tables are expected to grow large. Filters are explicit, typed, per-endpoint query parameters, not a generic filter query language; tenant scope is always derived from the authenticated context, never accepted as a client-supplied filter. See D-041.
+
+OpenAPI is generated from NestJS controllers/DTOs via `@nestjs/swagger` decorators, introduced with the first real endpoints (Phase 1). The interactive docs UI is available in development/staging; production disables it or gates it behind authenticated admin access.
+
 ## Synchronization
 Provide scoped bootstrap, pull cursors/versions, ordered push where required, retry/backoff, partial-failure visibility, actionable rejection, and explicit conflict handling.
 
@@ -159,6 +168,8 @@ Completed financial facts are never overwritten.
 
 ## Outbox
 Use a transactional outbox only for facts requiring synchronization, notification, asynchronous processing, or external delivery.
+
+Every finalized command that changes tenant-owned state produces an audit record; read-only queries never do (see D-017). A command additionally produces an outbox event only when it can originate offline on a client device and must reach the server later (D-021) — sales, payments, inventory/cash movements, register open/close, cancellations, and refunds. Server-managed configuration (promotions, pricing, permissions, business configuration, AI-executed actions per D-026) is audited but distributed to clients through the scoped pull/bootstrap mechanism (Phase 6), not the outbox: the outbox carries client-to-server facts, pull/bootstrap carries server-to-client reference data. See D-042.
 
 ## Testing
 Use pure unit/property tests, PostgreSQL integration tests, synchronization integration tests, Playwright E2E tests, and non-functional checks.

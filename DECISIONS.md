@@ -129,6 +129,15 @@ Permission identifiers follow `<module>.<action>` (for example `sales.create`, `
 ## D-039 Current-accounts ledger model
 The current-accounts ledger uses a generic model: `account`, `account_holder`, and `account_movement`. An account belongs to a customer, an employee, or internal staff, according to business configuration (see D-019). Movements are immutable facts — for example a charge/debt entry, a payment, an authorized adjustment, or a reversal — never a mutable balance field overwritten without history. A balance projection may exist for efficient reads as long as it stays reconcilable against the movement history. Credit limits, due dates, aging, advanced financial policies, and advanced reconciliation are not implemented yet (see Pending decisions and ROADMAP.md Phase 8). This decision covers only the ledger's data model; the new-customer credit authorization policy (SPECS.md §13.3, ROADMAP.md Phase 5) is unchanged.
 
+## D-040 REST error envelope
+All REST error responses use one envelope: `{ "error": { "code", "message", "correlationId", "details" } }`. `code` is a stable, versioned `SCREAMING_SNAKE_CASE` identifier, never the raw HTTP status text; `correlationId` ties the response to server logs and audit records; `details` is an optional array of field-level validation errors (`{ field, message }`). Internal error messages, stack traces, and secrets are never included in a response; unexpected failures return a generic `INTERNAL_ERROR` response, logged server-side under the same correlationId.
+
+## D-041 Pagination and filtering
+List endpoints use cursor-based pagination: an opaque `cursor` query parameter and a `limit` (default and max defined per endpoint). Responses return `{ data: T[], pagination: { nextCursor: string | null } }`. Offset/page-number pagination is not used, since audit, sales-history, and reporting tables are expected to grow large (see SPECS.md §23.3). Filters are explicit, typed, per-endpoint query parameters, not a generic filter query language; tenant scope (`business_id`) is always derived from the authenticated context, never accepted as a client-supplied filter.
+
+## D-042 Audit and synchronization event mapping
+Every finalized command that changes tenant-owned state produces an audit record (see D-017); read-only queries never do. A command additionally produces a synchronization outbox event only when it can originate offline on a client device and must reach the server later (D-021) — financial and inventory facts: sales, payments, inventory/cash movements, register open/close, cancellations, and refunds. Server-managed configuration (promotions, pricing, permissions, business configuration, AI-executed actions per D-026) is audited but distributed to clients through the scoped pull/bootstrap mechanism (ROADMAP.md Phase 6), not the outbox — the outbox carries client-to-server facts, pull/bootstrap carries server-to-client reference data.
+
 ## Pending decisions
 
 The following decisions are required before their dependent work can proceed but have not been approved. Do not resolve them by inference; escalate before the blocking checkpoint is reached.
