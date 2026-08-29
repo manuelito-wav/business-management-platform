@@ -10,9 +10,14 @@
       "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
     },
     "test": {
+      "dependsOn": ["^build"],
       "env": ["DATABASE_URL"]
     },
-    "typecheck": {},
-    "lint": {}
+    "typecheck": {
+      "dependsOn": ["^build"]
+    },
+    "lint": {
+      "dependsOn": ["^build"]
+    }
   }
 }
