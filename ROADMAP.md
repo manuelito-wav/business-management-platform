@@ -129,7 +129,7 @@ or synchronization boundaries.
   pagination/filter conventions, OpenAPI publication, and a versioned command
   envelope for finalized operations. Define which operations produce audit and
   synchronization events.
-  - Commit: `docs: define modular monolith contracts`
+  - Commit: `docs: define modular monolith contracts` -- done (4cffd25)
 - Produce an initial data model and migration policy: every tenant-owned table
   has `business_id`; immutable operational facts reference actor, register/
   session where applicable, and correlation/operation IDs; audit/outbox tables
