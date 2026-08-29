@@ -112,6 +112,10 @@ Operational facts are append-only where history matters:
 
 Current state may use repairable projections.
 
+Every tenant-owned table carries an indexed `business_id`. Immutable operational-fact tables additionally carry an actor reference, a register/session reference where the fact is register-scoped, and correlation/operation IDs (see Command envelope). Audit and outbox tables are physically separate from operational tables, indexed for their own query patterns, and never read on the POS's live operational path. See D-043.
+
+Migrations are authored through Prisma Migrate, reviewed like code, and forward-only — an applied migration is never edited after merge; mistakes are corrected by a new migration. Destructive schema changes (dropping a column or table) go through a deprecation step in application code before the drop migration ships. See D-044.
+
 ## Financial settlement
 A completed sale is settled transactionally and writes required sale, payment, inventory, cash, audit, and outbox facts together. The `POS/sales` module coordinates this settlement as a single use case, but each participating module owns its own facts: `payments` owns payment records, `inventory` owns inventory movements, `cash` owns cash movements, `current accounts` owns account-ledger entries, `audit` owns audit records, and `synchronization` owns outbox events. A module records its own facts through an application-service method that the coordinating use case calls within the shared transaction; no module writes directly into another module's tables.
 
