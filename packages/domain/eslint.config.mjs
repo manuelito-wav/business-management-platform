@@ -1,4 +1,4 @@
-import { defineConfig } from "eslint/config";
+import { defineConfig, globalIgnores } from "eslint/config";
 import { baseConfig } from "../../eslint.config.base.mjs";
 
-export default defineConfig([...baseConfig]);
+export default defineConfig([globalIgnores(["dist/**"]), ...baseConfig]);
