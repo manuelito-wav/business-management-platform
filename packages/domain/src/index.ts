@@ -1,5 +1,8 @@
 // Pure business concepts and calculations (no framework or browser
-// dependencies -- see ARCHITECTURE.md "domain"). Populated starting with
-// the pricing, inventory, and promotion logic introduced in later phases.
+// dependencies -- see ARCHITECTURE.md "domain"). Pricing, inventory,
+// and promotion logic are added in later phases; deterministic time/
+// identity abstractions are established now (Phase 0) so that work
+// has a testable foundation from day one.
 
-export const DOMAIN_PACKAGE_NAME = "@bmp/domain";
+export { type Clock, SystemClock } from "./clock";
+export { type IdGenerator, Uuidv4Generator, Uuidv7Generator } from "./id-generator";

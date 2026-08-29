@@ -159,10 +159,17 @@ importers:
         version: 6.0.3
 
   packages/domain:
+    dependencies:
+      uuid:
+        specifier: 14.0.2
+        version: 14.0.2
     devDependencies:
       typescript:
         specifier: 6.0.3
         version: 6.0.3
+      vitest:
+        specifier: 4.1.11
+        version: 4.1.11(@types/node@26.4.0)(jsdom@30.0.1)(vite@8.2.2(@types/node@26.4.0)(jiti@2.7.0)(yaml@2.9.0))
 
   packages/ui:
     devDependencies:
@@ -3996,6 +4003,10 @@ packages:
 
   util-deprecate@1.0.2:
     resolution: {integrity: sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw==}
+
+  uuid@14.0.2:
+    resolution: {integrity: sha512-xZe/16rV4aa+HGSOCiY2YeLT1OybRLrrkL/Rqaq7p7GMVXjFh+6wN4oMYgjFmnSnhY8t6Xpdl2l9qmnHYuMHwQ==}
+    hasBin: true
 
   valibot@1.4.2:
     resolution: {integrity: sha512-gjdCvJ6d3RyHAneqxMYMW9QMCwYMb3jpOO0IyHZV1bnRHFBHrX3VkIILt5XYR0WhwHiH7Mty8ovuPZ/O3gamrg==}
@@ -8125,6 +8136,8 @@ snapshots:
       punycode: 2.3.1
 
   util-deprecate@1.0.2: {}
+
+  uuid@14.0.2: {}
 
   valibot@1.4.2(typescript@6.0.3):
     optionalDependencies:
