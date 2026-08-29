@@ -139,7 +139,10 @@ or synchronization boundaries.
   - Commit: `docs: define tenant and operational data model` -- done (72ab4e4)
 - Establish a test-data factory and deterministic clock/ID abstractions for
   domain tests. Seed a kiosk business only for local development.
-  - Commit: `test: add deterministic domain test support`
+  - Commit: `test: add deterministic domain test support` -- clock/ID
+    abstractions and the shared test harness done (9b72a70); seeding a kiosk
+    business relocated to Phase 1's memberships/roles checkpoint below, since
+    it needs the Business/User/Membership models that checkpoint introduces
 
 ## Phase 1 -- Identity, tenancy, authorization, and configuration core
 
@@ -157,7 +160,8 @@ all subsequent modules have safe tenancy and permission primitives.
 - Implement businesses, memberships, active-business selection, predefined
   seed roles, custom roles, granular permission catalog using the
   `<module>.<action>` identifier pattern (D-038), and role assignment per
-  membership. A role name grants nothing by itself.
+  membership. A role name grants nothing by itself. Seed a kiosk business for
+  local development only (never staging/production), per Phase 0.
   - Commit: `feat: add multi-business memberships and roles`
 - Add guards and service-level authorization that validate authentication,
   active business, membership, permission, and resource business ownership for
