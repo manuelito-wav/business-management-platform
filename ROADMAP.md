@@ -156,7 +156,7 @@ all subsequent modules have safe tenancy and permission primitives.
   boundary (a port/interface) rather than a concrete provider, so email, SMS,
   or another channel can be selected later without changing core auth logic.
   Keep POS PIN/biometrics as future authentication adapters.
-  - Commit: `feat: add password authentication and sessions`
+  - Commit: `feat: add password authentication and sessions` -- done (fc49c1e)
 - Implement businesses, memberships, active-business selection, predefined
   seed roles, custom roles, granular permission catalog using the
   `<module>.<action>` identifier pattern (D-038), and role assignment per
