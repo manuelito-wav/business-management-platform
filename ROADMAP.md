@@ -162,7 +162,7 @@ all subsequent modules have safe tenancy and permission primitives.
   `<module>.<action>` identifier pattern (D-038), and role assignment per
   membership. A role name grants nothing by itself. Seed a kiosk business for
   local development only (never staging/production), per Phase 0.
-  - Commit: `feat: add multi-business memberships and roles`
+  - Commit: `feat: add multi-business memberships and roles` -- done (f6b8098)
 - Add guards and service-level authorization that validate authentication,
   active business, membership, permission, and resource business ownership for
   every protected command/query. Make missing business scope a failure.
