@@ -16,18 +16,20 @@ export interface UpdateMembershipInput {
   status?: "active" | "inactive";
 }
 
-const membershipWithRole = { include: { role: true } } as const;
-type MembershipWithRole = Prisma.MembershipGetPayload<typeof membershipWithRole>;
+const membershipWithRole = {
+  include: { role: { include: { rolePermissions: true } } },
+} as const;
+export type MembershipWithRole = Prisma.MembershipGetPayload<typeof membershipWithRole>;
 
 /**
  * Owns Membership (and, transitively through Role, the permission
- * evaluation used by `requirePermission`). This is a hand-written,
- * per-call check -- not yet the generic reusable guard described in
- * ROADMAP.md's "enforce backend tenant authorization" checkpoint, which
- * will apply the same evaluation across every protected command/query.
- * It exists now because write endpoints introduced in this checkpoint
- * (adding members, creating custom roles) would otherwise be an
- * unguarded tenant-isolation hole.
+ * evaluation used by `requirePermission`). These checks run at two
+ * layers by design (ROADMAP.md "enforce backend tenant authorization"):
+ * BusinessAuthorizationGuard calls them first, at the HTTP boundary, for
+ * every route that carries it; the methods below also call each other
+ * directly, so the same invariant holds for callers that never go
+ * through HTTP at all -- the kiosk dev seed script, and
+ * BusinessesService's transaction-composed business creation.
  */
 @Injectable()
 export class MembershipsService {
@@ -69,18 +71,19 @@ export class MembershipsService {
     userId: string,
     businessId: string,
     permissionCode: string,
-  ): Promise<void> {
+  ): Promise<MembershipWithRole> {
     const membership = await this.requireActiveMembership(userId, businessId);
-    const rolePermissions = await this.prisma.rolePermission.findFirst({
-      where: { roleId: membership.roleId, permissionCode },
-    });
-    if (!rolePermissions) {
+    const hasPermission = membership.role.rolePermissions.some(
+      (rolePermission) => rolePermission.permissionCode === permissionCode,
+    );
+    if (!hasPermission) {
       throw new AppException(
         "PERMISSION_DENIED",
         `Missing required permission: ${permissionCode}.`,
         HttpStatus.FORBIDDEN,
       );
     }
+    return membership;
   }
 
   async addMember(actingUserId: string, businessId: string, input: AddMemberInput) {

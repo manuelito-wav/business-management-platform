@@ -11,12 +11,14 @@ import {
 } from "@nestjs/common";
 import { AccessTokenGuard, type RequestWithUser } from "../identity/access-token.guard";
 import { CurrentUser } from "../identity/current-user.decorator";
+import { BusinessAuthorizationGuard } from "./business-authorization.guard";
 import { AddMemberDto } from "./dto/add-member.dto";
 import { UpdateMembershipDto } from "./dto/update-membership.dto";
 import { MembershipsService } from "./memberships.service";
+import { RequirePermission } from "./require-permission.decorator";
 
 @Controller("businesses/:businessId/memberships")
-@UseGuards(AccessTokenGuard)
+@UseGuards(AccessTokenGuard, BusinessAuthorizationGuard)
 export class MembershipsController {
   constructor(private readonly memberships: MembershipsService) {}
 
@@ -27,6 +29,7 @@ export class MembershipsController {
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
+  @RequirePermission("users.manage")
   add(
     @CurrentUser() user: RequestWithUser["user"],
     @Param("businessId") businessId: string,
@@ -36,6 +39,7 @@ export class MembershipsController {
   }
 
   @Patch(":membershipId")
+  @RequirePermission("users.manage")
   update(
     @CurrentUser() user: RequestWithUser["user"],
     @Param("businessId") businessId: string,
