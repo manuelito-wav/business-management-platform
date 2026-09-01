@@ -166,7 +166,7 @@ all subsequent modules have safe tenancy and permission primitives.
 - Add guards and service-level authorization that validate authentication,
   active business, membership, permission, and resource business ownership for
   every protected command/query. Make missing business scope a failure.
-  - Commit: `feat: enforce backend tenant authorization`
+  - Commit: `feat: enforce backend tenant authorization` -- done (bb3c941)
 - Provide session/device listing and authorized remote session termination.
   - Commit: `feat: add session device management`
 - Implement a typed per-business configuration/module registry with safe
