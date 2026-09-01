@@ -1,7 +1,9 @@
-// Phase 1 -- "add password authentication and sessions". These models are
-// deliberately NOT tenant-owned (no business_id): a User is a global
-// identity that can join multiple businesses via Membership, introduced in
-// the next checkpoint (see SPECS.md 4.2, ARCHITECTURE.md "Tenancy").
+// Phase 1. User/UserSession/PasswordResetToken (below) are deliberately NOT
+// tenant-owned (no business_id): a User is a global identity that joins
+// multiple businesses via Membership (see SPECS.md 4.2, ARCHITECTURE.md
+// "Tenancy"). Business, Membership, and Role ARE tenant-owned per D-043.
+// Permission is a global, non-tenant-owned catalog (D-038): the identifier
+// scheme is shared across every business, not per-business data.
 
 datasource db {
   provider = "postgresql"
@@ -28,6 +30,7 @@ model User {
 
   sessions            UserSession[]
   passwordResetTokens PasswordResetToken[]
+  memberships         Membership[]
 
   @@map("users")
 }
@@ -42,15 +45,24 @@ model UserSession {
   userId String @map("user_id")
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  accessTokenHash       String    @unique @map("access_token_hash")
-  accessTokenExpiresAt  DateTime  @map("access_token_expires_at")
-  refreshTokenHash      String    @unique @map("refresh_token_hash")
-  refreshTokenExpiresAt DateTime  @map("refresh_token_expires_at")
+  accessTokenHash       String   @unique @map("access_token_hash")
+  accessTokenExpiresAt  DateTime @map("access_token_expires_at")
+  refreshTokenHash      String   @unique @map("refresh_token_hash")
+  refreshTokenExpiresAt DateTime @map("refresh_token_expires_at")
 
   userAgent  String?   @map("user_agent")
   createdAt  DateTime  @default(now()) @map("created_at")
   lastUsedAt DateTime  @default(now()) @map("last_used_at")
   revokedAt  DateTime? @map("revoked_at")
+
+  // The business currently selected as "active" for this session (SPECS.md
+  // 4.2: "the active business must be explicit in application context").
+  // This is only a pointer, not a cached permission claim -- every
+  // protected operation still re-evaluates membership/permission against
+  // current database state (ARCHITECTURE.md Tenancy), it is never trusted
+  // by itself.
+  activeBusinessId String?   @map("active_business_id")
+  activeBusiness   Business? @relation(fields: [activeBusinessId], references: [id], onDelete: SetNull)
 
   @@index([userId])
   @@map("user_sessions")
@@ -68,4 +80,110 @@ model PasswordResetToken {
 
   @@index([userId])
   @@map("password_reset_tokens")
+}
+
+enum BusinessStatus {
+  active
+  inactive
+}
+
+model Business {
+  id               String         @id
+  name             String
+  businessTimezone String         @default("America/Argentina/Buenos_Aires") @map("business_timezone")
+  status           BusinessStatus @default(active)
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+
+  memberships    Membership[]
+  roles          Role[]
+  activeSessions UserSession[]
+
+  @@map("businesses")
+}
+
+enum MembershipStatus {
+  active
+  inactive
+}
+
+// A user's link to one business, and the single role that link carries
+// (SPECS.md 4.2: "Business A: Administrator. Business B: Employee.").
+// Revoking access sets status to inactive rather than deleting the row,
+// per D-037 -- the historical assignment is kept.
+model Membership {
+  id         String @id
+  userId     String @map("user_id")
+  businessId String @map("business_id")
+  roleId     String @map("role_id")
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  // Composite FK against Role's (id, businessId), not just roleId, so the
+  // database itself rejects assigning a role from a different business --
+  // defense in depth alongside the application-level check in
+  // MembershipsService.requireRoleInBusiness (tenant isolation is priority
+  // #1 per AGENT.md).
+  role     Role     @relation(fields: [roleId, businessId], references: [id, businessId])
+
+  status    MembershipStatus @default(active)
+  createdAt DateTime         @default(now()) @map("created_at")
+  updatedAt DateTime         @updatedAt @map("updated_at")
+
+  @@unique([userId, businessId])
+  @@index([businessId])
+  @@index([userId])
+  @@map("memberships")
+}
+
+// Roles are business-owned (D-043: every tenant-owned table carries
+// business_id), even the four predefined ones -- each business gets its
+// own copies at creation (isSystem = true), so one business editing its
+// "Manager" role's permissions never affects another business's. Roles
+// are collections of permissions; a role's name grants nothing by itself
+// (D-038) -- authorization always evaluates RolePermission, never the name.
+model Role {
+  id         String  @id
+  businessId String  @map("business_id")
+  name       String
+  isSystem   Boolean @default(false) @map("is_system")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  memberships     Membership[]
+  rolePermissions RolePermission[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([businessId, name])
+  @@unique([id, businessId])
+  @@index([businessId])
+  @@map("roles")
+}
+
+// Global permission catalog (D-038): `<module>.<action>` identifiers are
+// shared across every business, so this table is NOT tenant-owned -- it
+// has no business_id. This is the seed set of examples from D-038, not
+// the final exhaustive catalog (see DECISIONS.md "Pending decisions").
+model Permission {
+  code        String @id
+  module      String
+  action      String
+  description String
+
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId         String @map("role_id")
+  permissionCode String @map("permission_code")
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionCode], references: [code], onDelete: Cascade)
+
+  @@id([roleId, permissionCode])
+  @@map("role_permissions")
 }

@@ -112,7 +112,22 @@ export class AuthService {
       throw new UnauthorizedException("This account is inactive.");
     }
 
-    return session.user;
+    return { ...session.user, sessionId: session.id, activeBusinessId: session.activeBusinessId };
+  }
+
+  /**
+   * Only updates the session's business pointer -- it does not itself
+   * check membership. Callers (see businesses.controller.ts) validate
+   * the caller actually belongs to the business first, via
+   * MembershipsService. Kept here, free of any dependency on the
+   * memberships module, to avoid a circular module dependency (see
+   * memberships.module.ts, which imports IdentityModule).
+   */
+  async setActiveBusiness(sessionId: string, businessId: string): Promise<void> {
+    await this.prisma.userSession.update({
+      where: { id: sessionId },
+      data: { activeBusinessId: businessId },
+    });
   }
 
   private async createSession(userId: string, userAgent?: string): Promise<AuthSession> {

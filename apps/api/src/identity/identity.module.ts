@@ -22,6 +22,6 @@ import { UsersService } from "./users.service";
     AccessTokenGuard,
     { provide: PASSWORD_RESET_DELIVERY, useClass: LoggingPasswordResetDelivery },
   ],
-  exports: [AuthService, UsersService],
+  exports: [AuthService, UsersService, AccessTokenGuard],
 })
 export class IdentityModule {}

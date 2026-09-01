@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "postinstall": "prisma generate",
-    "db:migrate:deploy": "prisma migrate deploy"
+    "db:migrate:deploy": "prisma migrate deploy",
+    "db:seed:kiosk": "tsx prisma/seed-kiosk.ts"
   },
   "dependencies": {
     "@bmp/domain": "workspace:*",
@@ -38,6 +39,7 @@
     "@types/node": "26.4.0",
     "@types/pg": "8.23.1",
     "prisma": "7.10.0",
+    "tsx": "4.23.13",
     "typescript": "6.0.3",
     "unplugin-swc": "1.5.11",
     "vitest": "4.1.11"

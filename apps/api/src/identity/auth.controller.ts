@@ -92,7 +92,12 @@ export class AuthController {
   @Get("me")
   @UseGuards(AccessTokenGuard)
   me(@CurrentUser() user: RequestWithUser["user"]) {
-    return { id: user.id, email: user.email, username: user.username };
+    return {
+      id: user.id,
+      email: user.email,
+      username: user.username,
+      activeBusinessId: user.activeBusinessId,
+    };
   }
 
   @Post("password-reset")
