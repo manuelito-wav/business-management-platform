@@ -189,7 +189,7 @@ for a sale; no financial sale is settled yet.
   stored in object storage when image support is enabled, searchable catalog
   endpoints, and per-business uniqueness rules. Index normalised
   barcode/SKU/external identifiers.
-  - Commit: `feat: add product catalog and categories`
+  - Commit: `feat: add product catalog and categories` -- done (a77753e)
 - Implement unit and weighted sale modes with GR/KG initial units, integer
   grams as the internal authoritative precision (D-008), and explicit
   quantity validation/conversion rules. Do not encode floating-point values in
