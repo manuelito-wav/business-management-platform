@@ -29,7 +29,17 @@ function definePlainSection<T extends object>(
   return {
     defaultValue,
     sanitize(storedValue: unknown): T {
-      const instance = plainToInstance(sectionClass, storedValue);
+      // Merged over the default before validating: a section gaining a
+      // new field in a later checkpoint (e.g. featureFlags.productImages)
+      // must not make every business's already-stored, still-otherwise-
+      // valid value for that section look "corrupt" and reset entirely --
+      // only a field that is actually invalid after the merge falls back
+      // to the full default.
+      const merged =
+        storedValue && typeof storedValue === "object"
+          ? { ...defaultValue, ...storedValue }
+          : defaultValue;
+      const instance = plainToInstance(sectionClass, merged);
       const errors = validateSync(instance as object);
       return errors.length === 0 ? instance : defaultValue;
     },

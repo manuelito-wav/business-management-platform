@@ -76,6 +76,12 @@ export const PERMISSION_CATALOG: readonly PermissionDefinition[] = [
     action: "view",
     description: "View the business's audit trail.",
   },
+  {
+    code: "catalog.manage",
+    module: "catalog",
+    action: "manage",
+    description: "Create and manage categories and products.",
+  },
 ];
 
 export interface PredefinedRoleDefinition {
@@ -103,6 +109,7 @@ export const PREDEFINED_ROLES: readonly PredefinedRoleDefinition[] = [
       "reports.view",
       "register.override_close_conflict",
       "audit.view",
+      "catalog.manage",
     ],
   },
   {
@@ -115,6 +122,7 @@ export const PREDEFINED_ROLES: readonly PredefinedRoleDefinition[] = [
       "sales.cancel",
       "sales.discount",
       "sales.refund",
+      "catalog.manage",
     ],
   },
   { name: "Employee", permissionCodes: ["sales.create"] },

@@ -95,11 +95,14 @@ model Business {
   createdAt        DateTime       @default(now()) @map("created_at")
   updatedAt        DateTime       @updatedAt @map("updated_at")
 
-  memberships    Membership[]
-  roles          Role[]
-  activeSessions UserSession[]
-  configurations BusinessConfiguration[]
-  auditEvents    AuditEvent[]
+  memberships        Membership[]
+  roles              Role[]
+  activeSessions     UserSession[]
+  configurations     BusinessConfiguration[]
+  auditEvents        AuditEvent[]
+  categories         Category[]
+  products           Product[]
+  productIdentifiers ProductIdentifier[]
 
   @@map("businesses")
 }
@@ -238,4 +241,103 @@ model AuditEvent {
 
   @@index([businessId, targetType, createdAt])
   @@map("audit_events")
+}
+
+enum CategoryStatus {
+  active
+  inactive
+}
+
+// Flat, not hierarchical: SPECS.md only describes categories as POS
+// "quick-access" visual groups (6.2), never a category tree. A nested
+// structure would be speculative until a real need for it appears.
+model Category {
+  id         String         @id
+  businessId String         @map("business_id")
+  name       String
+  status     CategoryStatus @default(active)
+  createdAt  DateTime       @default(now()) @map("created_at")
+  updatedAt  DateTime       @updatedAt @map("updated_at")
+
+  business Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  products Product[]
+
+  @@unique([businessId, name])
+  // Lets Product's category relation be a composite FK against (id,
+  // businessId), the same cross-tenant defense used for Membership/Role.
+  @@unique([id, businessId])
+  @@index([businessId])
+  @@map("categories")
+}
+
+enum ProductSaleMode {
+  unit
+  weighted
+}
+
+enum ProductStatus {
+  active
+  inactive
+}
+
+// Pricing (cost/salePrice/profit/marginPercent) is deliberately not here --
+// ROADMAP.md's next checkpoint ("add deterministic product pricing") owns
+// that as its own service and storage. `imageUrl` is a plain optional URL
+// column: no object-storage SDK is wired up yet (D-020: images are optional
+// shortcuts, the catalog stays fully searchable without them; the infra
+// doc's own sequencing introduces S3-compatible storage "when images...
+// are enabled", i.e. with a real upload flow, not preemptively here).
+model Product {
+  id          String          @id
+  businessId  String          @map("business_id")
+  categoryId  String          @map("category_id")
+  name        String
+  description String?
+  saleMode    ProductSaleMode @default(unit) @map("sale_mode")
+  imageUrl    String?         @map("image_url")
+  status      ProductStatus   @default(active)
+  createdAt   DateTime        @default(now()) @map("created_at")
+  updatedAt   DateTime        @updatedAt @map("updated_at")
+
+  business    Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  // Composite FK: prevents assigning a category that belongs to a
+  // different business (cross-tenant leakage), same pattern as
+  // Membership.role.
+  category    Category            @relation(fields: [categoryId, businessId], references: [id, businessId])
+  identifiers ProductIdentifier[]
+
+  @@unique([id, businessId])
+  @@index([businessId, name])
+  @@map("products")
+}
+
+enum ProductIdentifierType {
+  barcode
+  sku
+  external
+}
+
+// One product may carry several identifiers (SPECS.md 6.2: "Barcode. SKU.
+// Other configured identifiers.") -- multiple barcodes (case vs. unit,
+// supplier-specific) are common in real retail catalogs. `normalizedValue`
+// (trimmed + uppercased, see product-identifier-normalization.ts) is what
+// uniqueness and search actually index against, per business and type --
+// ROADMAP.md "per-business uniqueness rules" / "index normalised
+// barcode/SKU/external identifiers".
+model ProductIdentifier {
+  id              String                @id
+  businessId      String                @map("business_id")
+  productId       String                @map("product_id")
+  type            ProductIdentifierType
+  value           String
+  normalizedValue String                @map("normalized_value")
+  createdAt       DateTime              @default(now()) @map("created_at")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  product  Product  @relation(fields: [productId, businessId], references: [id, businessId], onDelete: Cascade)
+
+  @@unique([businessId, type, normalizedValue])
+  @@index([businessId, normalizedValue])
+  @@index([productId])
+  @@map("product_identifiers")
 }

@@ -159,6 +159,35 @@ describe("Business configuration registry", () => {
     expect(sections.policies).toEqual(POLICIES_DEFAULT);
   });
 
+  it("defaults just a newly-added field instead of resetting the whole section (regression)", async () => {
+    // Simulates data stored before featureFlags gained `productImages`:
+    // the stored value is missing that field entirely.
+    const { business } = await createOwner("config-owner4b@kiosk.test");
+    await prisma.businessConfiguration.create({
+      data: {
+        id: "pre-migration-config-4b",
+        businessId: business.id,
+        key: "featureFlags",
+        value: {
+          expirationTracking: true,
+          currentAccounts: false,
+          priceLists: true,
+          scheduledReports: false,
+        },
+      },
+    });
+
+    const sections = await configuration.getSections(business.id);
+
+    expect(sections.featureFlags).toEqual({
+      expirationTracking: true,
+      currentAccounts: false,
+      priceLists: true,
+      scheduledReports: false,
+      productImages: false,
+    });
+  });
+
   it("updates the business timezone through BusinessesService, independent of the registry sections", async () => {
     const { owner, business } = await createOwner("config-owner5@kiosk.test");
     expect(business.businessTimezone).toBe("America/Argentina/Buenos_Aires");

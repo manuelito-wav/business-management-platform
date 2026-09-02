@@ -2,6 +2,7 @@ import { MiddlewareConsumer, Module, NestModule } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { AuditQueryModule } from "./audit/audit-query.module";
 import { BusinessesModule } from "./businesses/businesses.module";
+import { CatalogModule } from "./catalog/catalog.module";
 import { CorrelationIdMiddleware } from "./common/middleware/correlation-id.middleware";
 import { ConfigurationModule } from "./configuration/configuration.module";
 import { HealthModule } from "./health/health.module";
@@ -19,6 +20,7 @@ import { PrismaModule } from "./prisma/prisma.module";
     BusinessesModule,
     ConfigurationModule,
     AuditQueryModule,
+    CatalogModule,
   ],
 })
 export class AppModule implements NestModule {
