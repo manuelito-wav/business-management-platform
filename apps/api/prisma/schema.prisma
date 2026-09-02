@@ -98,8 +98,31 @@ model Business {
   memberships    Membership[]
   roles          Role[]
   activeSessions UserSession[]
+  configurations BusinessConfiguration[]
 
   @@map("businesses")
+}
+
+// One row per configuration section (D-035-adjacent business config: payment
+// methods, feature flags, policies, and later module settings). Keyed by an
+// application-level `key` rather than a fixed column per section, so a new
+// module can register its own section later without a schema migration --
+// see apps/api/src/configuration/configuration-registry.ts, the typed
+// registry that owns each section's shape and safe default. Data, not code:
+// values are plain JSON, validated against the registry on write and
+// re-validated (falling back to the safe default) on read.
+model BusinessConfiguration {
+  id         String   @id
+  businessId String   @map("business_id")
+  key        String
+  value      Json
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, key])
+  @@index([businessId])
+  @@map("business_configurations")
 }
 
 enum MembershipStatus {

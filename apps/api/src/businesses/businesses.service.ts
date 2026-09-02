@@ -1,5 +1,6 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { HttpStatus, Inject, Injectable } from "@nestjs/common";
 import type { IdGenerator } from "@bmp/domain";
+import { AppException } from "../common/app-exception";
 import { ID_GENERATOR } from "../common/domain-providers";
 import { PrismaService } from "../prisma/prisma.service";
 import { MembershipsService } from "../memberships/memberships.service";
@@ -53,5 +54,27 @@ export class BusinessesService {
 
   findManyByIds(ids: string[]) {
     return this.prisma.business.findMany({ where: { id: { in: ids } } });
+  }
+
+  findById(businessId: string) {
+    return this.prisma.business.findUnique({ where: { id: businessId } });
+  }
+
+  /**
+   * Callers guarded by BusinessAuthorizationGuard never actually hit the
+   * "not found" branch -- an active membership implies the business
+   * exists (FK-enforced) -- but the return type still needs narrowing.
+   */
+  async requireById(businessId: string) {
+    const business = await this.findById(businessId);
+    if (!business) {
+      throw new AppException("BUSINESS_NOT_FOUND", "Business not found.", HttpStatus.NOT_FOUND);
+    }
+    return business;
+  }
+
+  /** businessTimezone is per-business configuration (D-035), not a permanent constant. */
+  updateTimezone(businessId: string, businessTimezone: string) {
+    return this.prisma.business.update({ where: { id: businessId }, data: { businessTimezone } });
   }
 }

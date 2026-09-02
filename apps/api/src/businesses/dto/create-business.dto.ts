@@ -1,4 +1,5 @@
-import { IsOptional, IsString, MinLength } from "class-validator";
+import { IsIn, IsOptional, IsString, MinLength } from "class-validator";
+import { IANA_TIMEZONES } from "../../common/iana-timezones";
 
 export class CreateBusinessDto {
   @IsString()
@@ -7,7 +8,6 @@ export class CreateBusinessDto {
 
   /** Defaults to America/Argentina/Buenos_Aires per D-035 when omitted. */
   @IsOptional()
-  @IsString()
-  @MinLength(1)
+  @IsIn(IANA_TIMEZONES)
   businessTimezone?: string;
 }
