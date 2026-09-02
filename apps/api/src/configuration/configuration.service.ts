@@ -1,5 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
 import type { IdGenerator } from "@bmp/domain";
+import { AuditService } from "../audit/audit.service";
 import { ID_GENERATOR } from "../common/domain-providers";
 import { Prisma } from "../generated/prisma/client";
 import { MembershipsService } from "../memberships/memberships.service";
@@ -16,6 +17,7 @@ export class ConfigurationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly memberships: MembershipsService,
+    private readonly audit: AuditService,
     @Inject(ID_GENERATOR) private readonly ids: IdGenerator,
   ) {}
 
@@ -45,6 +47,7 @@ export class ConfigurationService {
     actingUserId: string,
     businessId: string,
     patch: Partial<Record<ConfigurationKey, object>>,
+    correlationId: string,
   ): Promise<ConfigurationSections> {
     await this.memberships.requirePermission(actingUserId, businessId, "configuration.manage");
 
@@ -57,13 +60,24 @@ export class ConfigurationService {
       (entry): entry is [ConfigurationKey, object] => entry[1] !== undefined,
     );
 
+    if (entries.length === 0) {
+      return this.getSections(businessId);
+    }
+
     // A single PATCH may touch several sections at once; one transaction
     // so a request that (say) fails on its second upsert never leaves
     // one section changed and another not (transaction atomicity, priority
-    // #4 per AGENT.md).
-    await this.prisma.$transaction(
-      entries.map(([key, value]) =>
-        this.prisma.businessConfiguration.upsert({
+    // #4 per AGENT.md), and so the audit record commits with the change
+    // it describes rather than as a separate, possibly-missing write.
+    await this.prisma.$transaction(async (tx) => {
+      const touchedKeys = entries.map(([key]) => key);
+      const existingRows = await tx.businessConfiguration.findMany({
+        where: { businessId, key: { in: touchedKeys } },
+      });
+      const beforeByKey = new Map(existingRows.map((row) => [row.key, row.value]));
+
+      for (const [key, value] of entries) {
+        await tx.businessConfiguration.upsert({
           where: { businessId_key: { businessId, key } },
           create: {
             id: this.ids.generate(),
@@ -72,9 +86,25 @@ export class ConfigurationService {
             value: value as Prisma.InputJsonValue,
           },
           update: { value: value as Prisma.InputJsonValue },
-        }),
-      ),
-    );
+        });
+      }
+
+      await this.audit.record(tx, {
+        businessId,
+        actorUserId: actingUserId,
+        action: "configuration.updated",
+        targetType: "business_configuration",
+        targetId: businessId,
+        before: Object.fromEntries(
+          touchedKeys.map((key) => [
+            key,
+            beforeByKey.get(key) ?? CONFIGURATION_REGISTRY[key].defaultValue,
+          ]),
+        ),
+        after: Object.fromEntries(entries),
+        correlationId,
+      });
+    });
 
     return this.getSections(businessId);
   }

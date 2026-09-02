@@ -38,6 +38,7 @@ describe("Business configuration registry (HTTP)", () => {
     await prisma.rolePermission.deleteMany();
     await prisma.membership.deleteMany();
     await prisma.role.deleteMany();
+    await prisma.auditEvent.deleteMany();
     await prisma.business.deleteMany();
     await prisma.userSession.deleteMany();
     await prisma.user.deleteMany();

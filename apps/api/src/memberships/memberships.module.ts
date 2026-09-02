@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { AuditModule } from "../audit/audit.module";
 import { domainProviders } from "../common/domain-providers";
 import { IdentityModule } from "../identity/identity.module";
 import { BusinessAuthorizationGuard } from "./business-authorization.guard";
@@ -10,7 +11,7 @@ import { RolesController } from "./roles.controller";
 import { RolesService } from "./roles.service";
 
 @Module({
-  imports: [IdentityModule],
+  imports: [IdentityModule, AuditModule],
   controllers: [PermissionsController, RolesController, MembershipsController],
   providers: [
     ...domainProviders,

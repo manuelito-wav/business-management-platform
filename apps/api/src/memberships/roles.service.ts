@@ -1,5 +1,6 @@
 import { HttpStatus, Inject, Injectable } from "@nestjs/common";
 import type { IdGenerator } from "@bmp/domain";
+import { AuditService } from "../audit/audit.service";
 import { AppException } from "../common/app-exception";
 import { ID_GENERATOR } from "../common/domain-providers";
 import { Prisma } from "../generated/prisma/client";
@@ -17,6 +18,7 @@ export class RolesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly memberships: MembershipsService,
+    private readonly audit: AuditService,
     @Inject(ID_GENERATOR) private readonly ids: IdGenerator,
   ) {}
 
@@ -51,7 +53,12 @@ export class RolesService {
     return roleIdsByName;
   }
 
-  async createCustomRole(actingUserId: string, businessId: string, input: CreateCustomRoleInput) {
+  async createCustomRole(
+    actingUserId: string,
+    businessId: string,
+    input: CreateCustomRoleInput,
+    correlationId: string,
+  ) {
     await this.memberships.requirePermission(actingUserId, businessId, "roles.manage");
 
     // Deduplicated up front: `permission.count` counts distinct matching
@@ -73,17 +80,29 @@ export class RolesService {
     }
 
     try {
-      return await this.prisma.role.create({
-        data: {
-          id: this.ids.generate(),
-          businessId,
-          name: input.name,
-          isSystem: false,
-          rolePermissions: {
-            create: permissionCodes.map((permissionCode) => ({ permissionCode })),
+      return await this.prisma.$transaction(async (tx) => {
+        const role = await tx.role.create({
+          data: {
+            id: this.ids.generate(),
+            businessId,
+            name: input.name,
+            isSystem: false,
+            rolePermissions: {
+              create: permissionCodes.map((permissionCode) => ({ permissionCode })),
+            },
           },
-        },
-        include: { rolePermissions: true },
+          include: { rolePermissions: true },
+        });
+        await this.audit.record(tx, {
+          businessId,
+          actorUserId: actingUserId,
+          action: "role.created",
+          targetType: "role",
+          targetId: role.id,
+          after: { name: input.name, permissionCodes },
+          correlationId,
+        });
+        return role;
       });
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {

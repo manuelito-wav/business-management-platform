@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, Patch, UseGuards } from "@nestjs/common";
 import { BusinessesService } from "../businesses/businesses.service";
+import { CorrelationId } from "../common/correlation-id.decorator";
 import { AccessTokenGuard, type RequestWithUser } from "../identity/access-token.guard";
 import { CurrentUser } from "../identity/current-user.decorator";
 import { BusinessAuthorizationGuard } from "../memberships/business-authorization.guard";
@@ -31,13 +32,19 @@ export class ConfigurationController {
     @CurrentUser() user: RequestWithUser["user"],
     @Param("businessId") businessId: string,
     @Body() dto: UpdateConfigurationDto,
+    @CorrelationId() correlationId: string,
   ) {
     const { businessTimezone, ...sectionPatch } = dto;
 
     if (businessTimezone) {
-      await this.businesses.updateTimezone(businessId, businessTimezone);
+      await this.businesses.updateTimezone(businessId, businessTimezone, user.id, correlationId);
     }
-    const sections = await this.configuration.updateSections(user.id, businessId, sectionPatch);
+    const sections = await this.configuration.updateSections(
+      user.id,
+      businessId,
+      sectionPatch,
+      correlationId,
+    );
     const business = await this.businesses.requireById(businessId);
 
     return { businessTimezone: business.businessTimezone, ...sections };

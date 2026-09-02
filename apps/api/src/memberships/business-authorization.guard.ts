@@ -47,9 +47,15 @@ export class BusinessAuthorizationGuard implements CanActivate {
       );
     }
 
-    const permissionCode = this.reflector.get<string | undefined>(
+    // getAllAndOverride, not get(..., context.getHandler()) alone: a
+    // route handler's own @RequirePermission wins, but one applied at
+    // the controller class level (no per-method override) is honored
+    // too, rather than being silently ignored (see audit.controller.ts
+    // for why this was tightened -- a class-level placement there was a
+    // real, initially-unenforced permission gap caught by its own test).
+    const permissionCode = this.reflector.getAllAndOverride<string | undefined>(
       PERMISSION_METADATA_KEY,
-      context.getHandler(),
+      [context.getHandler(), context.getClass()],
     );
 
     request.membership = permissionCode

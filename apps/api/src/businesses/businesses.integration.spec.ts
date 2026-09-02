@@ -1,6 +1,7 @@
 import "reflect-metadata";
 import { Test } from "@nestjs/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { AuditService } from "../audit/audit.service";
 import { domainProviders } from "../common/domain-providers";
 import { AuthService } from "../identity/auth.service";
 import { PasswordHasherService } from "../identity/password-hasher.service";
@@ -12,6 +13,8 @@ import { RolesService } from "../memberships/roles.service";
 import { PrismaModule } from "../prisma/prisma.module";
 import { PrismaService } from "../prisma/prisma.service";
 import { BusinessesService } from "./businesses.service";
+
+const TEST_CORRELATION_ID = "test-correlation-id";
 
 describe("Businesses, memberships, and roles", () => {
   let prisma: PrismaService;
@@ -34,6 +37,7 @@ describe("Businesses, memberships, and roles", () => {
         RolesService,
         MembershipsService,
         BusinessesService,
+        AuditService,
       ],
     }).compile();
 
@@ -58,6 +62,7 @@ describe("Businesses, memberships, and roles", () => {
     await prisma.rolePermission.deleteMany();
     await prisma.membership.deleteMany();
     await prisma.role.deleteMany();
+    await prisma.auditEvent.deleteMany();
     await prisma.business.deleteMany();
     await prisma.userSession.deleteMany();
     await prisma.user.deleteMany();
@@ -107,10 +112,12 @@ describe("Businesses, memberships, and roles", () => {
       where: { businessId: business.id, name: "Employee" },
     });
 
-    const membership = await memberships.addMember(owner.id, business.id, {
-      email: employee.email,
-      roleId: employeeRole.id,
-    });
+    const membership = await memberships.addMember(
+      owner.id,
+      business.id,
+      { email: employee.email, roleId: employeeRole.id },
+      TEST_CORRELATION_ID,
+    );
 
     expect(membership.userId).toBe(employee.id);
     expect(membership.roleId).toBe(employeeRole.id);
@@ -125,10 +132,12 @@ describe("Businesses, memberships, and roles", () => {
     const employeeRole = await prisma.role.findFirstOrThrow({
       where: { businessId: business.id, name: "Employee" },
     });
-    await memberships.addMember(owner.id, business.id, {
-      email: cashier.email,
-      roleId: employeeRole.id,
-    });
+    await memberships.addMember(
+      owner.id,
+      business.id,
+      { email: cashier.email, roleId: employeeRole.id },
+      TEST_CORRELATION_ID,
+    );
 
     const outsider = await users.create({
       email: "outsider4@kiosk.test",
@@ -137,10 +146,12 @@ describe("Businesses, memberships, and roles", () => {
 
     // The cashier (Employee role, no users.manage) tries to add a member.
     await expect(
-      memberships.addMember(cashier.id, business.id, {
-        email: outsider.email,
-        roleId: employeeRole.id,
-      }),
+      memberships.addMember(
+        cashier.id,
+        business.id,
+        { email: outsider.email, roleId: employeeRole.id },
+        TEST_CORRELATION_ID,
+      ),
     ).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
   });
 
@@ -156,10 +167,12 @@ describe("Businesses, memberships, and roles", () => {
     });
 
     await expect(
-      memberships.addMember(stranger.id, business.id, {
-        email: target.email,
-        roleId: employeeRole.id,
-      }),
+      memberships.addMember(
+        stranger.id,
+        business.id,
+        { email: target.email, roleId: employeeRole.id },
+        TEST_CORRELATION_ID,
+      ),
     ).rejects.toMatchObject({ code: "MEMBERSHIP_NOT_FOUND" });
   });
 
@@ -172,16 +185,20 @@ describe("Businesses, memberships, and roles", () => {
     const employeeRole = await prisma.role.findFirstOrThrow({
       where: { businessId: business.id, name: "Employee" },
     });
-    await memberships.addMember(owner.id, business.id, {
-      email: employee.email,
-      roleId: employeeRole.id,
-    });
+    await memberships.addMember(
+      owner.id,
+      business.id,
+      { email: employee.email, roleId: employeeRole.id },
+      TEST_CORRELATION_ID,
+    );
 
     await expect(
-      memberships.addMember(owner.id, business.id, {
-        email: employee.email,
-        roleId: employeeRole.id,
-      }),
+      memberships.addMember(
+        owner.id,
+        business.id,
+        { email: employee.email, roleId: employeeRole.id },
+        TEST_CORRELATION_ID,
+      ),
     ).rejects.toMatchObject({ code: "MEMBERSHIP_ALREADY_EXISTS" });
   });
 
@@ -194,20 +211,24 @@ describe("Businesses, memberships, and roles", () => {
     const target = await users.create({ email: "target7@kiosk.test", password: "correct-horse-1" });
 
     await expect(
-      memberships.addMember(owner1.id, business1.id, {
-        email: target.email,
-        roleId: foreignRole.id,
-      }),
+      memberships.addMember(
+        owner1.id,
+        business1.id,
+        { email: target.email, roleId: foreignRole.id },
+        TEST_CORRELATION_ID,
+      ),
     ).rejects.toMatchObject({ code: "ROLE_NOT_FOUND" });
   });
 
   it("lets the Owner create a custom role with valid permission codes", async () => {
     const { owner, business } = await createOwner("owner8@kiosk.test");
 
-    const role = await roles.createCustomRole(owner.id, business.id, {
-      name: "Night supervisor",
-      permissionCodes: ["sales.cancel", "reports.view"],
-    });
+    const role = await roles.createCustomRole(
+      owner.id,
+      business.id,
+      { name: "Night supervisor", permissionCodes: ["sales.cancel", "reports.view"] },
+      TEST_CORRELATION_ID,
+    );
 
     expect(role.isSystem).toBe(false);
     expect(
@@ -218,10 +239,12 @@ describe("Businesses, memberships, and roles", () => {
   it("deduplicates a repeated permission code instead of rejecting or double-inserting it", async () => {
     const { owner, business } = await createOwner("owner8b@kiosk.test");
 
-    const role = await roles.createCustomRole(owner.id, business.id, {
-      name: "Repeats supervisor",
-      permissionCodes: ["sales.cancel", "sales.cancel"],
-    });
+    const role = await roles.createCustomRole(
+      owner.id,
+      business.id,
+      { name: "Repeats supervisor", permissionCodes: ["sales.cancel", "sales.cancel"] },
+      TEST_CORRELATION_ID,
+    );
 
     expect(role.rolePermissions.map((rolePermission) => rolePermission.permissionCode)).toEqual([
       "sales.cancel",
@@ -232,10 +255,12 @@ describe("Businesses, memberships, and roles", () => {
     const { owner, business } = await createOwner("owner9@kiosk.test");
 
     await expect(
-      roles.createCustomRole(owner.id, business.id, {
-        name: "Ghost role",
-        permissionCodes: ["sales.teleport"],
-      }),
+      roles.createCustomRole(
+        owner.id,
+        business.id,
+        { name: "Ghost role", permissionCodes: ["sales.teleport"] },
+        TEST_CORRELATION_ID,
+      ),
     ).rejects.toMatchObject({ code: "INVALID_PERMISSION_CODE" });
   });
 
@@ -243,10 +268,12 @@ describe("Businesses, memberships, and roles", () => {
     const { owner, business } = await createOwner("owner10@kiosk.test");
 
     await expect(
-      roles.createCustomRole(owner.id, business.id, {
-        name: "Owner",
-        permissionCodes: ["sales.create"],
-      }),
+      roles.createCustomRole(
+        owner.id,
+        business.id,
+        { name: "Owner", permissionCodes: ["sales.create"] },
+        TEST_CORRELATION_ID,
+      ),
     ).rejects.toMatchObject({ code: "ROLE_NAME_ALREADY_EXISTS" });
   });
 
@@ -262,19 +289,29 @@ describe("Businesses, memberships, and roles", () => {
     const managerRole = await prisma.role.findFirstOrThrow({
       where: { businessId: business.id, name: "Manager" },
     });
-    const membership = await memberships.addMember(owner.id, business.id, {
-      email: employee.email,
-      roleId: employeeRole.id,
-    });
+    const membership = await memberships.addMember(
+      owner.id,
+      business.id,
+      { email: employee.email, roleId: employeeRole.id },
+      TEST_CORRELATION_ID,
+    );
 
-    const promoted = await memberships.updateMembership(owner.id, business.id, membership.id, {
-      roleId: managerRole.id,
-    });
+    const promoted = await memberships.updateMembership(
+      owner.id,
+      business.id,
+      membership.id,
+      { roleId: managerRole.id },
+      TEST_CORRELATION_ID,
+    );
     expect(promoted.roleId).toBe(managerRole.id);
 
-    const revoked = await memberships.updateMembership(owner.id, business.id, membership.id, {
-      status: "inactive",
-    });
+    const revoked = await memberships.updateMembership(
+      owner.id,
+      business.id,
+      membership.id,
+      { status: "inactive" },
+      TEST_CORRELATION_ID,
+    );
     expect(revoked.status).toBe("inactive");
     expect(await memberships.findActiveMembership(employee.id, business.id)).toBeNull();
   });

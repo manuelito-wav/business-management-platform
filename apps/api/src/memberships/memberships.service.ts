@@ -1,5 +1,6 @@
 import { HttpStatus, Inject, Injectable } from "@nestjs/common";
 import type { IdGenerator } from "@bmp/domain";
+import { AuditService } from "../audit/audit.service";
 import { AppException } from "../common/app-exception";
 import { ID_GENERATOR } from "../common/domain-providers";
 import { Prisma } from "../generated/prisma/client";
@@ -36,6 +37,7 @@ export class MembershipsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly users: UsersService,
+    private readonly audit: AuditService,
     @Inject(ID_GENERATOR) private readonly ids: IdGenerator,
   ) {}
 
@@ -86,7 +88,12 @@ export class MembershipsService {
     return membership;
   }
 
-  async addMember(actingUserId: string, businessId: string, input: AddMemberInput) {
+  async addMember(
+    actingUserId: string,
+    businessId: string,
+    input: AddMemberInput,
+    correlationId: string,
+  ) {
     await this.requirePermission(actingUserId, businessId, "users.manage");
     await this.requireRoleInBusiness(businessId, input.roleId);
 
@@ -100,8 +107,25 @@ export class MembershipsService {
     }
 
     try {
-      return await this.prisma.membership.create({
-        data: { id: this.ids.generate(), userId: targetUser.id, businessId, roleId: input.roleId },
+      return await this.prisma.$transaction(async (tx) => {
+        const membership = await tx.membership.create({
+          data: {
+            id: this.ids.generate(),
+            userId: targetUser.id,
+            businessId,
+            roleId: input.roleId,
+          },
+        });
+        await this.audit.record(tx, {
+          businessId,
+          actorUserId: actingUserId,
+          action: "membership.created",
+          targetType: "membership",
+          targetId: membership.id,
+          after: { userId: targetUser.id, roleId: input.roleId },
+          correlationId,
+        });
+        return membership;
       });
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
@@ -120,6 +144,7 @@ export class MembershipsService {
     businessId: string,
     membershipId: string,
     input: UpdateMembershipInput,
+    correlationId: string,
   ) {
     await this.requirePermission(actingUserId, businessId, "users.manage");
 
@@ -140,9 +165,22 @@ export class MembershipsService {
       await this.requireRoleInBusiness(businessId, input.roleId);
     }
 
-    return this.prisma.membership.update({
-      where: { id: membershipId },
-      data: { roleId: input.roleId, status: input.status },
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.membership.update({
+        where: { id: membershipId },
+        data: { roleId: input.roleId, status: input.status },
+      });
+      await this.audit.record(tx, {
+        businessId,
+        actorUserId: actingUserId,
+        action: "membership.updated",
+        targetType: "membership",
+        targetId: membershipId,
+        before: { roleId: membership.roleId, status: membership.status },
+        after: { roleId: updated.roleId, status: updated.status },
+        correlationId,
+      });
+      return updated;
     });
   }
 

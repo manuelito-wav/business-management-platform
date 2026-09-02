@@ -12,6 +12,7 @@ function contextFor(request: Partial<RequestWithMembership>): ExecutionContext {
   return {
     switchToHttp: () => ({ getRequest: () => request }),
     getHandler: () => (): void => undefined,
+    getClass: () => class {},
   } as unknown as ExecutionContext;
 }
 
@@ -21,7 +22,9 @@ describe("BusinessAuthorizationGuard", () => {
   it("resolves businessId from the route param when present", async () => {
     const requireActiveMembership = vi.fn().mockResolvedValue(membershipStub);
     const memberships = { requireActiveMembership } as unknown as MembershipsService;
-    const reflector = { get: vi.fn().mockReturnValue(undefined) } as unknown as Reflector;
+    const reflector = {
+      getAllAndOverride: vi.fn().mockReturnValue(undefined),
+    } as unknown as Reflector;
     const guard = new BusinessAuthorizationGuard(memberships, reflector);
 
     const request: Partial<RequestWithMembership> = {
@@ -40,7 +43,9 @@ describe("BusinessAuthorizationGuard", () => {
   it("falls back to the session's active business when no route param exists", async () => {
     const requireActiveMembership = vi.fn().mockResolvedValue(membershipStub);
     const memberships = { requireActiveMembership } as unknown as MembershipsService;
-    const reflector = { get: vi.fn().mockReturnValue(undefined) } as unknown as Reflector;
+    const reflector = {
+      getAllAndOverride: vi.fn().mockReturnValue(undefined),
+    } as unknown as Reflector;
     const guard = new BusinessAuthorizationGuard(memberships, reflector);
 
     const request: Partial<RequestWithMembership> = {
@@ -60,7 +65,9 @@ describe("BusinessAuthorizationGuard", () => {
       requireActiveMembership: vi.fn(),
       requirePermission: vi.fn(),
     } as unknown as MembershipsService;
-    const reflector = { get: vi.fn().mockReturnValue(undefined) } as unknown as Reflector;
+    const reflector = {
+      getAllAndOverride: vi.fn().mockReturnValue(undefined),
+    } as unknown as Reflector;
     const guard = new BusinessAuthorizationGuard(memberships, reflector);
 
     const request: Partial<RequestWithMembership> = {
@@ -77,7 +84,9 @@ describe("BusinessAuthorizationGuard", () => {
   it("checks the specific permission when the route carries @RequirePermission", async () => {
     const requirePermission = vi.fn().mockResolvedValue(membershipStub);
     const memberships = { requirePermission } as unknown as MembershipsService;
-    const reflector = { get: vi.fn().mockReturnValue("roles.manage") } as unknown as Reflector;
+    const reflector = {
+      getAllAndOverride: vi.fn().mockReturnValue("roles.manage"),
+    } as unknown as Reflector;
     const guard = new BusinessAuthorizationGuard(memberships, reflector);
 
     const request: Partial<RequestWithMembership> = {

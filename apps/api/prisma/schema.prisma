@@ -99,6 +99,7 @@ model Business {
   roles          Role[]
   activeSessions UserSession[]
   configurations BusinessConfiguration[]
+  auditEvents    AuditEvent[]
 
   @@map("businesses")
 }
@@ -209,4 +210,32 @@ model RolePermission {
 
   @@id([roleId, permissionCode])
   @@map("role_permissions")
+}
+
+// Immutable operational-fact table (D-043): append-only, physically separate
+// from operational tables, indexed business + entity(target type) + date per
+// D-043's own stated pattern. Deliberately no onDelete: Cascade from
+// Business -- an audit trail must outlive the row it describes changes to
+// (D-017/D-037: historical facts are never deleted or destructively
+// modified). actorUserId is a plain reference, not a foreign key, for the
+// same reason on the User side. "Minimal" before/after data only (SPECS.md
+// 23.2: "Avoid storing unnecessarily large object copies") -- the changed
+// fields, never a full row snapshot.
+model AuditEvent {
+  id            String @id
+  businessId    String @map("business_id")
+  actorUserId   String @map("actor_user_id")
+  action        String
+  targetType    String @map("target_type")
+  targetId      String @map("target_id")
+  beforeData    Json?  @map("before_data")
+  afterData     Json?  @map("after_data")
+  correlationId String @map("correlation_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  business Business @relation(fields: [businessId], references: [id])
+
+  @@index([businessId, targetType, createdAt])
+  @@map("audit_events")
 }

@@ -9,6 +9,7 @@ import {
   Post,
   UseGuards,
 } from "@nestjs/common";
+import { CorrelationId } from "../common/correlation-id.decorator";
 import { AccessTokenGuard, type RequestWithUser } from "../identity/access-token.guard";
 import { CurrentUser } from "../identity/current-user.decorator";
 import { BusinessAuthorizationGuard } from "./business-authorization.guard";
@@ -34,8 +35,9 @@ export class MembershipsController {
     @CurrentUser() user: RequestWithUser["user"],
     @Param("businessId") businessId: string,
     @Body() dto: AddMemberDto,
+    @CorrelationId() correlationId: string,
   ) {
-    return this.memberships.addMember(user.id, businessId, dto);
+    return this.memberships.addMember(user.id, businessId, dto, correlationId);
   }
 
   @Patch(":membershipId")
@@ -45,7 +47,8 @@ export class MembershipsController {
     @Param("businessId") businessId: string,
     @Param("membershipId") membershipId: string,
     @Body() dto: UpdateMembershipDto,
+    @CorrelationId() correlationId: string,
   ) {
-    return this.memberships.updateMembership(user.id, businessId, membershipId, dto);
+    return this.memberships.updateMembership(user.id, businessId, membershipId, dto, correlationId);
   }
 }

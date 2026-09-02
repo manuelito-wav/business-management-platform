@@ -1,6 +1,7 @@
 import "reflect-metadata";
 import { Test } from "@nestjs/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { AuditService } from "../audit/audit.service";
 import { BusinessesService } from "../businesses/businesses.service";
 import { domainProviders } from "../common/domain-providers";
 import { PasswordHasherService } from "../identity/password-hasher.service";
@@ -14,6 +15,8 @@ import { ConfigurationService } from "./configuration.service";
 import { FEATURE_FLAGS_DEFAULT } from "./sections/feature-flags.config";
 import { PAYMENT_METHODS_DEFAULT } from "./sections/payment-methods.config";
 import { POLICIES_DEFAULT } from "./sections/policies.config";
+
+const TEST_CORRELATION_ID = "test-correlation-id";
 
 describe("Business configuration registry", () => {
   let prisma: PrismaService;
@@ -34,6 +37,7 @@ describe("Business configuration registry", () => {
         MembershipsService,
         BusinessesService,
         ConfigurationService,
+        AuditService,
       ],
     }).compile();
 
@@ -54,6 +58,7 @@ describe("Business configuration registry", () => {
     await prisma.rolePermission.deleteMany();
     await prisma.membership.deleteMany();
     await prisma.role.deleteMany();
+    await prisma.auditEvent.deleteMany();
     await prisma.business.deleteMany();
     await prisma.user.deleteMany();
   });
@@ -77,9 +82,12 @@ describe("Business configuration registry", () => {
   it("persists an update and returns it on the next read", async () => {
     const { owner, business } = await createOwner("config-owner2@kiosk.test");
 
-    const updated = await configuration.updateSections(owner.id, business.id, {
-      paymentMethods: { enabled: ["cash", "card"] },
-    });
+    const updated = await configuration.updateSections(
+      owner.id,
+      business.id,
+      { paymentMethods: { enabled: ["cash", "card"] } },
+      TEST_CORRELATION_ID,
+    );
     expect(updated.paymentMethods).toEqual({ enabled: ["cash", "card"] });
 
     const reread = await configuration.getSections(business.id);
@@ -96,10 +104,12 @@ describe("Business configuration registry", () => {
     // caller never mentioned. That must not upsert a bogus stored value.
     const { owner, business } = await createOwner("config-owner2b@kiosk.test");
 
-    await configuration.updateSections(owner.id, business.id, {
-      paymentMethods: { enabled: ["cash"] },
-      featureFlags: undefined,
-    });
+    await configuration.updateSections(
+      owner.id,
+      business.id,
+      { paymentMethods: { enabled: ["cash"] }, featureFlags: undefined },
+      TEST_CORRELATION_ID,
+    );
 
     const stored = await prisma.businessConfiguration.findMany({
       where: { businessId: business.id },
@@ -116,15 +126,20 @@ describe("Business configuration registry", () => {
     const employeeRole = await prisma.role.findFirstOrThrow({
       where: { businessId: business.id, name: "Employee" },
     });
-    await memberships.addMember(owner.id, business.id, {
-      email: employee.email,
-      roleId: employeeRole.id,
-    });
+    await memberships.addMember(
+      owner.id,
+      business.id,
+      { email: employee.email, roleId: employeeRole.id },
+      TEST_CORRELATION_ID,
+    );
 
     await expect(
-      configuration.updateSections(employee.id, business.id, {
-        featureFlags: { ...FEATURE_FLAGS_DEFAULT, priceLists: true },
-      }),
+      configuration.updateSections(
+        employee.id,
+        business.id,
+        { featureFlags: { ...FEATURE_FLAGS_DEFAULT, priceLists: true } },
+        TEST_CORRELATION_ID,
+      ),
     ).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
   });
 
@@ -145,10 +160,15 @@ describe("Business configuration registry", () => {
   });
 
   it("updates the business timezone through BusinessesService, independent of the registry sections", async () => {
-    const { business } = await createOwner("config-owner5@kiosk.test");
+    const { owner, business } = await createOwner("config-owner5@kiosk.test");
     expect(business.businessTimezone).toBe("America/Argentina/Buenos_Aires");
 
-    const updated = await businesses.updateTimezone(business.id, "America/Santiago");
+    const updated = await businesses.updateTimezone(
+      business.id,
+      "America/Santiago",
+      owner.id,
+      TEST_CORRELATION_ID,
+    );
 
     expect(updated.businessTimezone).toBe("America/Santiago");
   });

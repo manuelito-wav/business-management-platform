@@ -1,5 +1,6 @@
 import { HttpStatus, Inject, Injectable } from "@nestjs/common";
 import type { IdGenerator } from "@bmp/domain";
+import { AuditService } from "../audit/audit.service";
 import { AppException } from "../common/app-exception";
 import { ID_GENERATOR } from "../common/domain-providers";
 import { PrismaService } from "../prisma/prisma.service";
@@ -15,6 +16,7 @@ export class BusinessesService {
     private readonly permissions: PermissionsService,
     private readonly roles: RolesService,
     private readonly memberships: MembershipsService,
+    private readonly audit: AuditService,
     @Inject(ID_GENERATOR) private readonly ids: IdGenerator,
   ) {}
 
@@ -74,7 +76,29 @@ export class BusinessesService {
   }
 
   /** businessTimezone is per-business configuration (D-035), not a permanent constant. */
-  updateTimezone(businessId: string, businessTimezone: string) {
-    return this.prisma.business.update({ where: { id: businessId }, data: { businessTimezone } });
+  async updateTimezone(
+    businessId: string,
+    businessTimezone: string,
+    actorUserId: string,
+    correlationId: string,
+  ) {
+    return this.prisma.$transaction(async (tx) => {
+      const previous = await tx.business.findUniqueOrThrow({ where: { id: businessId } });
+      const updated = await tx.business.update({
+        where: { id: businessId },
+        data: { businessTimezone },
+      });
+      await this.audit.record(tx, {
+        businessId,
+        actorUserId,
+        action: "business.timezone_updated",
+        targetType: "business",
+        targetId: businessId,
+        before: { businessTimezone: previous.businessTimezone },
+        after: { businessTimezone: updated.businessTimezone },
+        correlationId,
+      });
+      return updated;
+    });
   }
 }

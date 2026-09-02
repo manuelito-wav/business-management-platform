@@ -70,6 +70,12 @@ export const PERMISSION_CATALOG: readonly PermissionDefinition[] = [
     action: "manage",
     description: "Create and manage custom roles.",
   },
+  {
+    code: "audit.view",
+    module: "audit",
+    action: "view",
+    description: "View the business's audit trail.",
+  },
 ];
 
 export interface PredefinedRoleDefinition {
@@ -96,6 +102,7 @@ export const PREDEFINED_ROLES: readonly PredefinedRoleDefinition[] = [
       "roles.manage",
       "reports.view",
       "register.override_close_conflict",
+      "audit.view",
     ],
   },
   {
