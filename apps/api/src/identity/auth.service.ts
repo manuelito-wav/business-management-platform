@@ -3,7 +3,11 @@ import type { Clock, IdGenerator } from "@bmp/domain";
 import { AppException } from "../common/app-exception";
 import { CLOCK, ID_GENERATOR } from "../common/domain-providers";
 import { PrismaService } from "../prisma/prisma.service";
-import { ACCESS_TOKEN_TTL_MS, REFRESH_TOKEN_TTL_MS } from "./identity.constants";
+import {
+  ACCESS_TOKEN_TTL_MS,
+  REFRESH_TOKEN_TTL_MS,
+  SESSION_LAST_USED_TOUCH_INTERVAL_MS,
+} from "./identity.constants";
 import { PasswordHasherService } from "./password-hasher.service";
 import { TokenService } from "./token.service";
 import { UsersService } from "./users.service";
@@ -13,6 +17,15 @@ export interface AuthSession {
   accessTokenExpiresAt: Date;
   refreshToken: string;
   refreshTokenExpiresAt: Date;
+}
+
+export interface SessionSummary {
+  id: string;
+  userAgent: string | null;
+  createdAt: Date;
+  lastUsedAt: Date;
+  /** Whether this is the session the request making this call is itself using. */
+  current: boolean;
 }
 
 const INVALID_CREDENTIALS_MESSAGE = "Invalid credentials.";
@@ -112,6 +125,8 @@ export class AuthService {
       throw new UnauthorizedException("This account is inactive.");
     }
 
+    await this.touchLastUsed(session);
+
     return { ...session.user, sessionId: session.id, activeBusinessId: session.activeBusinessId };
   }
 
@@ -128,6 +143,57 @@ export class AuthService {
       where: { id: sessionId },
       data: { activeBusinessId: businessId },
     });
+  }
+
+  /**
+   * "Device" here means a session (SPECS.md/ROADMAP.md "session/device
+   * listing"): this project does not fingerprint hardware, it lists live
+   * sessions by their user-agent string. Only sessions that could still
+   * be used to obtain a new access token are listed -- revoked or
+   * refresh-expired ones are already effectively logged out.
+   */
+  async listSessions(userId: string, currentSessionId: string): Promise<SessionSummary[]> {
+    const sessions = await this.prisma.userSession.findMany({
+      where: { userId, revokedAt: null, refreshTokenExpiresAt: { gt: this.clock.now() } },
+      orderBy: { lastUsedAt: "desc" },
+    });
+
+    return sessions.map((session) => ({
+      id: session.id,
+      userAgent: session.userAgent,
+      createdAt: session.createdAt,
+      lastUsedAt: session.lastUsedAt,
+      current: session.id === currentSessionId,
+    }));
+  }
+
+  /**
+   * Revokes any one of the caller's own sessions by ID -- "remote session
+   * termination" (ROADMAP.md), e.g. signing out a lost device. A session
+   * that does not exist and one that belongs to another user get the
+   * identical response, so this endpoint cannot be used to probe for
+   * valid session IDs.
+   */
+  async revokeSession(userId: string, sessionId: string): Promise<void> {
+    const session = await this.prisma.userSession.findUnique({ where: { id: sessionId } });
+    if (!session || session.userId !== userId) {
+      throw new AppException("SESSION_NOT_FOUND", "Session not found.", HttpStatus.NOT_FOUND);
+    }
+    if (session.revokedAt) {
+      return;
+    }
+    await this.prisma.userSession.update({
+      where: { id: sessionId },
+      data: { revokedAt: this.clock.now() },
+    });
+  }
+
+  private async touchLastUsed(session: { id: string; lastUsedAt: Date }): Promise<void> {
+    const now = this.clock.now();
+    if (now.getTime() - session.lastUsedAt.getTime() < SESSION_LAST_USED_TOUCH_INTERVAL_MS) {
+      return;
+    }
+    await this.prisma.userSession.update({ where: { id: session.id }, data: { lastUsedAt: now } });
   }
 
   private async createSession(userId: string, userAgent?: string): Promise<AuthSession> {

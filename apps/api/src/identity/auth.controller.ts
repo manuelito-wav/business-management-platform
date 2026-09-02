@@ -1,9 +1,11 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
+  Param,
   Post,
   Req,
   Res,
@@ -98,6 +100,22 @@ export class AuthController {
       username: user.username,
       activeBusinessId: user.activeBusinessId,
     };
+  }
+
+  @Get("sessions")
+  @UseGuards(AccessTokenGuard)
+  listSessions(@CurrentUser() user: RequestWithUser["user"]) {
+    return this.authService.listSessions(user.id, user.sessionId);
+  }
+
+  @Delete("sessions/:sessionId")
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @UseGuards(AccessTokenGuard)
+  async revokeSession(
+    @CurrentUser() user: RequestWithUser["user"],
+    @Param("sessionId") sessionId: string,
+  ) {
+    await this.authService.revokeSession(user.id, sessionId);
   }
 
   @Post("password-reset")
