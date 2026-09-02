@@ -177,7 +177,7 @@ all subsequent modules have safe tenancy and permission primitives.
 - Add an audit writer for security, permission, configuration, and later
   financial actions, with actor, target reference, minimal before/after
   metadata, correlation ID, and indexes. Add a read API gated by permission.
-  - Commit: `feat: add foundational audit logging`
+  - Commit: `feat: add foundational audit logging` -- done (bdb4b9c)
 
 ## Phase 2 -- Catalog, pricing, and operational register foundation
 
