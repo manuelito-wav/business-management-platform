@@ -168,7 +168,7 @@ all subsequent modules have safe tenancy and permission primitives.
   every protected command/query. Make missing business scope a failure.
   - Commit: `feat: enforce backend tenant authorization` -- done (bb3c941)
 - Provide session/device listing and authorized remote session termination.
-  - Commit: `feat: add session device management`
+  - Commit: `feat: add session device management` -- done (1589506)
 - Implement a typed per-business configuration/module registry with safe
   defaults: payment methods, feature flags, policies, timezone (default
   `America/Argentina/Buenos_Aires` per D-035), and later module settings. It
