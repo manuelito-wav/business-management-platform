@@ -173,7 +173,7 @@ all subsequent modules have safe tenancy and permission primitives.
   defaults: payment methods, feature flags, policies, timezone (default
   `America/Argentina/Buenos_Aires` per D-035), and later module settings. It
   is configuration, not arbitrary code execution.
-  - Commit: `feat: add business configuration registry`
+  - Commit: `feat: add business configuration registry` -- done (61cb7ac)
 - Add an audit writer for security, permission, configuration, and later
   financial actions, with actor, target reference, minimal before/after
   metadata, correlation ID, and indexes. Add a read API gated by permission.
