@@ -83,12 +83,21 @@ describe("Product pricing", () => {
     return { owner, business, product };
   }
 
+  function upsertPricing(
+    actingUserId: string,
+    businessId: string,
+    productId: string,
+    dto: Parameters<PricingService["upsert"]>[3],
+  ) {
+    return pricing.upsert(actingUserId, businessId, productId, dto, "test-correlation-id");
+  }
+
   // -- Creation (first-time upsert) ---------------------------------------
 
   it("creates pricing via sale-price mode", async () => {
     const { owner, business, product } = await createOwnerWithProduct("pricing-owner1");
 
-    const result = await pricing.upsert(owner.id, business.id, product.id, {
+    const result = await upsertPricing(owner.id, business.id, product.id, {
       costPrice: 5000,
       salePrice: 10000,
     });
@@ -103,7 +112,7 @@ describe("Product pricing", () => {
   it("creates pricing via target-profit mode", async () => {
     const { owner, business, product } = await createOwnerWithProduct("pricing-owner2");
 
-    const result = await pricing.upsert(owner.id, business.id, product.id, {
+    const result = await upsertPricing(owner.id, business.id, product.id, {
       costPrice: 5000,
       profit: 2500,
     });
@@ -116,7 +125,7 @@ describe("Product pricing", () => {
   it("creates pricing via target-Margin-% mode", async () => {
     const { owner, business, product } = await createOwnerWithProduct("pricing-owner3");
 
-    const result = await pricing.upsert(owner.id, business.id, product.id, {
+    const result = await upsertPricing(owner.id, business.id, product.id, {
       costPrice: 5000,
       marginPercentBasisPoints: 10000, // target 100.00%
     });
@@ -130,7 +139,7 @@ describe("Product pricing", () => {
     const { owner, business, product } = await createOwnerWithProduct("pricing-owner4");
 
     await expect(
-      pricing.upsert(owner.id, business.id, product.id, { salePrice: 10000 }),
+      upsertPricing(owner.id, business.id, product.id, { salePrice: 10000 }),
     ).rejects.toMatchObject({ code: "PRODUCT_PRICING_INITIAL_VALUES_REQUIRED" });
   });
 
@@ -138,7 +147,7 @@ describe("Product pricing", () => {
     const { owner, business, product } = await createOwnerWithProduct("pricing-owner5");
 
     await expect(
-      pricing.upsert(owner.id, business.id, product.id, { costPrice: 5000 }),
+      upsertPricing(owner.id, business.id, product.id, { costPrice: 5000 }),
     ).rejects.toMatchObject({ code: "PRODUCT_PRICING_INITIAL_VALUES_REQUIRED" });
   });
 
@@ -146,7 +155,7 @@ describe("Product pricing", () => {
     const { owner, business, product } = await createOwnerWithProduct("pricing-owner6");
 
     await expect(
-      pricing.upsert(owner.id, business.id, product.id, {
+      upsertPricing(owner.id, business.id, product.id, {
         costPrice: 5000,
         salePrice: 10000,
         profit: 2500,
@@ -159,7 +168,7 @@ describe("Product pricing", () => {
   it("allows sale-price and profit modes at costPrice 0, with a null (not zero) Margin %", async () => {
     const { owner, business, product } = await createOwnerWithProduct("pricing-owner7");
 
-    const result = await pricing.upsert(owner.id, business.id, product.id, {
+    const result = await upsertPricing(owner.id, business.id, product.id, {
       costPrice: 0,
       salePrice: 500,
     });
@@ -172,7 +181,7 @@ describe("Product pricing", () => {
     const { owner, business, product } = await createOwnerWithProduct("pricing-owner8");
 
     await expect(
-      pricing.upsert(owner.id, business.id, product.id, {
+      upsertPricing(owner.id, business.id, product.id, {
         costPrice: 0,
         marginPercentBasisPoints: 5000,
       }),
@@ -183,9 +192,9 @@ describe("Product pricing", () => {
 
   it("updating sale price recalculates profit and Margin %", async () => {
     const { owner, business, product } = await createOwnerWithProduct("pricing-owner9");
-    await pricing.upsert(owner.id, business.id, product.id, { costPrice: 5000, salePrice: 7500 });
+    await upsertPricing(owner.id, business.id, product.id, { costPrice: 5000, salePrice: 7500 });
 
-    const updated = await pricing.upsert(owner.id, business.id, product.id, { salePrice: 10000 });
+    const updated = await upsertPricing(owner.id, business.id, product.id, { salePrice: 10000 });
 
     expect(updated.costPrice).toBe(5000);
     expect(updated.profit).toBe(5000);
@@ -195,9 +204,9 @@ describe("Product pricing", () => {
 
   it("updating profit recalculates sale price and Margin %", async () => {
     const { owner, business, product } = await createOwnerWithProduct("pricing-owner10");
-    await pricing.upsert(owner.id, business.id, product.id, { costPrice: 5000, salePrice: 7500 });
+    await upsertPricing(owner.id, business.id, product.id, { costPrice: 5000, salePrice: 7500 });
 
-    const updated = await pricing.upsert(owner.id, business.id, product.id, { profit: 5000 });
+    const updated = await upsertPricing(owner.id, business.id, product.id, { profit: 5000 });
 
     expect(updated.salePrice).toBe(10000);
     expect(updated.marginPercentBasisPoints).toBe(10000);
@@ -206,9 +215,9 @@ describe("Product pricing", () => {
 
   it("updating Margin % recalculates sale price and profit", async () => {
     const { owner, business, product } = await createOwnerWithProduct("pricing-owner11");
-    await pricing.upsert(owner.id, business.id, product.id, { costPrice: 5000, salePrice: 7500 });
+    await upsertPricing(owner.id, business.id, product.id, { costPrice: 5000, salePrice: 7500 });
 
-    const updated = await pricing.upsert(owner.id, business.id, product.id, {
+    const updated = await upsertPricing(owner.id, business.id, product.id, {
       marginPercentBasisPoints: 10000,
     });
 
@@ -219,10 +228,10 @@ describe("Product pricing", () => {
 
   it("re-derives a Margin % update's stored value from the rounded sale price, staying self-consistent", async () => {
     const { owner, business, product } = await createOwnerWithProduct("pricing-owner12");
-    await pricing.upsert(owner.id, business.id, product.id, { costPrice: 3, salePrice: 3 });
+    await upsertPricing(owner.id, business.id, product.id, { costPrice: 3, salePrice: 3 });
 
     // Target 33.33% against cost 3 cannot be hit exactly in whole minor units.
-    const updated = await pricing.upsert(owner.id, business.id, product.id, {
+    const updated = await upsertPricing(owner.id, business.id, product.id, {
       marginPercentBasisPoints: 3333,
     });
 
@@ -238,9 +247,9 @@ describe("Product pricing", () => {
 
   it("a cost-only update preserves the sale price and leaves inputMode unchanged", async () => {
     const { owner, business, product } = await createOwnerWithProduct("pricing-owner13");
-    await pricing.upsert(owner.id, business.id, product.id, { costPrice: 5000, profit: 5000 });
+    await upsertPricing(owner.id, business.id, product.id, { costPrice: 5000, profit: 5000 });
 
-    const updated = await pricing.upsert(owner.id, business.id, product.id, { costPrice: 6000 });
+    const updated = await upsertPricing(owner.id, business.id, product.id, { costPrice: 6000 });
 
     expect(updated.costPrice).toBe(6000);
     expect(updated.salePrice).toBe(10000); // preserved (D-007)
@@ -251,9 +260,9 @@ describe("Product pricing", () => {
 
   it("a cost change down to 0 preserves sale price and nulls Margin %, never zero", async () => {
     const { owner, business, product } = await createOwnerWithProduct("pricing-owner14");
-    await pricing.upsert(owner.id, business.id, product.id, { costPrice: 5000, salePrice: 10000 });
+    await upsertPricing(owner.id, business.id, product.id, { costPrice: 5000, salePrice: 10000 });
 
-    const updated = await pricing.upsert(owner.id, business.id, product.id, { costPrice: 0 });
+    const updated = await upsertPricing(owner.id, business.id, product.id, { costPrice: 0 });
 
     expect(updated.salePrice).toBe(10000);
     expect(updated.profit).toBe(10000);
@@ -262,29 +271,67 @@ describe("Product pricing", () => {
 
   it("rejects combining costPrice with a target value in the same update", async () => {
     const { owner, business, product } = await createOwnerWithProduct("pricing-owner15");
-    await pricing.upsert(owner.id, business.id, product.id, { costPrice: 5000, salePrice: 7500 });
+    await upsertPricing(owner.id, business.id, product.id, { costPrice: 5000, salePrice: 7500 });
 
     await expect(
-      pricing.upsert(owner.id, business.id, product.id, { costPrice: 6000, salePrice: 9000 }),
+      upsertPricing(owner.id, business.id, product.id, { costPrice: 6000, salePrice: 9000 }),
     ).rejects.toMatchObject({ code: "PRODUCT_PRICING_AMBIGUOUS_UPDATE" });
   });
 
   it("rejects an update with neither costPrice nor a target value", async () => {
     const { owner, business, product } = await createOwnerWithProduct("pricing-owner16");
-    await pricing.upsert(owner.id, business.id, product.id, { costPrice: 5000, salePrice: 7500 });
+    await upsertPricing(owner.id, business.id, product.id, { costPrice: 5000, salePrice: 7500 });
 
-    await expect(pricing.upsert(owner.id, business.id, product.id, {})).rejects.toMatchObject({
+    await expect(upsertPricing(owner.id, business.id, product.id, {})).rejects.toMatchObject({
       code: "PRODUCT_PRICING_EMPTY_UPDATE",
     });
   });
 
   it("rejects a target profit/Margin % that would resolve to a negative sale price", async () => {
     const { owner, business, product } = await createOwnerWithProduct("pricing-owner17");
-    await pricing.upsert(owner.id, business.id, product.id, { costPrice: 1000, salePrice: 1500 });
+    await upsertPricing(owner.id, business.id, product.id, { costPrice: 1000, salePrice: 1500 });
 
     await expect(
-      pricing.upsert(owner.id, business.id, product.id, { profit: -2000 }),
+      upsertPricing(owner.id, business.id, product.id, { profit: -2000 }),
     ).rejects.toMatchObject({ code: "PRODUCT_PRICING_INVALID_SALE_PRICE" });
+  });
+
+  // -- Auditing (D-042: pricing is server-managed configuration) ------------
+
+  it("records an audit event when pricing is created", async () => {
+    const { owner, business, product } = await createOwnerWithProduct("pricing-owner21");
+
+    const created = await upsertPricing(owner.id, business.id, product.id, {
+      costPrice: 5000,
+      salePrice: 10000,
+    });
+
+    const events = await prisma.auditEvent.findMany({ where: { businessId: business.id } });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      action: "product_pricing.created",
+      targetType: "product_pricing",
+      targetId: created.id,
+      actorUserId: owner.id,
+      beforeData: null,
+    });
+    expect(events[0]?.afterData).toMatchObject({ costPrice: 5000, salePrice: 10000 });
+  });
+
+  it("records an audit event with before/after values when pricing is updated", async () => {
+    const { owner, business, product } = await createOwnerWithProduct("pricing-owner22");
+    await upsertPricing(owner.id, business.id, product.id, { costPrice: 5000, salePrice: 7500 });
+
+    await upsertPricing(owner.id, business.id, product.id, { salePrice: 10000 });
+
+    const events = await prisma.auditEvent.findMany({
+      where: { businessId: business.id },
+      orderBy: { createdAt: "asc" },
+    });
+    expect(events).toHaveLength(2);
+    expect(events[1]).toMatchObject({ action: "product_pricing.updated" });
+    expect(events[1]?.beforeData).toMatchObject({ salePrice: 7500 });
+    expect(events[1]?.afterData).toMatchObject({ salePrice: 10000 });
   });
 
   // -- Reads ----------------------------------------------------------------
@@ -310,7 +357,7 @@ describe("Product pricing", () => {
 
   it("rejects setting pricing without pricing.manage but allows reading it", async () => {
     const { owner, business, product } = await createOwnerWithProduct("pricing-owner20");
-    await pricing.upsert(owner.id, business.id, product.id, { costPrice: 5000, salePrice: 7500 });
+    await upsertPricing(owner.id, business.id, product.id, { costPrice: 5000, salePrice: 7500 });
 
     const employee = await users.create({
       email: "pricing-employee20@kiosk.test",
@@ -327,7 +374,7 @@ describe("Product pricing", () => {
     );
 
     await expect(
-      pricing.upsert(employee.id, business.id, product.id, { salePrice: 9000 }),
+      upsertPricing(employee.id, business.id, product.id, { salePrice: 9000 }),
     ).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
 
     await expect(pricing.findOne(employee.id, business.id, product.id)).resolves.toMatchObject({

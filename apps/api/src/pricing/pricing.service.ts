@@ -7,6 +7,7 @@ import {
   type IdGenerator,
   type PricingInputMode,
 } from "@bmp/domain";
+import { AuditService } from "../audit/audit.service";
 import { ProductsService } from "../catalog/products.service";
 import { AppException } from "../common/app-exception";
 import { ID_GENERATOR } from "../common/domain-providers";
@@ -19,6 +20,8 @@ interface ExistingPricing {
   id: string;
   costPrice: number;
   salePrice: number;
+  profit: number;
+  marginPercentBasisPoints: number | null;
   inputMode: PricingInputMode;
 }
 
@@ -28,6 +31,7 @@ export class PricingService {
     private readonly prisma: PrismaService,
     private readonly memberships: MembershipsService,
     private readonly products: ProductsService,
+    private readonly audit: AuditService,
     @Inject(ID_GENERATOR) private readonly ids: IdGenerator,
   ) {}
 
@@ -51,9 +55,16 @@ export class PricingService {
   /**
    * D-007: a single call drives at most one change -- see UpsertPricingDto's
    * doc comment for the four accepted shapes. Creates the pricing record on
-   * the product's first call, updates it (in place) afterwards.
+   * the product's first call, updates it (in place) afterwards. Audited
+   * (D-042: pricing is server-managed configuration).
    */
-  async upsert(actingUserId: string, businessId: string, productId: string, dto: UpsertPricingDto) {
+  async upsert(
+    actingUserId: string,
+    businessId: string,
+    productId: string,
+    dto: UpsertPricingDto,
+    correlationId: string,
+  ) {
     await this.memberships.requirePermission(actingUserId, businessId, "pricing.manage");
     await this.products.requireInBusiness(businessId, productId);
 
@@ -73,16 +84,26 @@ export class PricingService {
     });
 
     if (existing) {
-      return this.applyUpdate(businessId, productId, existing, dto, driverCount);
+      return this.applyUpdate(
+        actingUserId,
+        businessId,
+        productId,
+        existing,
+        dto,
+        driverCount,
+        correlationId,
+      );
     }
-    return this.applyCreate(businessId, productId, dto, driverCount);
+    return this.applyCreate(actingUserId, businessId, productId, dto, driverCount, correlationId);
   }
 
   private async applyCreate(
+    actingUserId: string,
     businessId: string,
     productId: string,
     dto: UpsertPricingDto,
     driverCount: number,
+    correlationId: string,
   ) {
     if (dto.costPrice === undefined || driverCount === 0) {
       throw new AppException(
@@ -94,15 +115,26 @@ export class PricingService {
 
     const costPrice = dto.costPrice;
     const { salePrice, inputMode } = this.resolveDrivenSalePrice(costPrice, dto);
-    return this.persist(businessId, productId, null, costPrice, salePrice, inputMode);
+    return this.persist(
+      actingUserId,
+      businessId,
+      productId,
+      null,
+      costPrice,
+      salePrice,
+      inputMode,
+      correlationId,
+    );
   }
 
   private async applyUpdate(
+    actingUserId: string,
     businessId: string,
     productId: string,
     existing: ExistingPricing,
     dto: UpsertPricingDto,
     driverCount: number,
+    correlationId: string,
   ) {
     if (dto.costPrice !== undefined && driverCount > 0) {
       throw new AppException(
@@ -124,17 +156,28 @@ export class PricingService {
       // the existing sale price and input mode, only recompute profit/
       // Margin % (done uniformly in `persist`).
       return this.persist(
+        actingUserId,
         businessId,
         productId,
         existing,
         dto.costPrice,
         existing.salePrice,
         existing.inputMode,
+        correlationId,
       );
     }
 
     const { salePrice, inputMode } = this.resolveDrivenSalePrice(existing.costPrice, dto);
-    return this.persist(businessId, productId, existing, existing.costPrice, salePrice, inputMode);
+    return this.persist(
+      actingUserId,
+      businessId,
+      productId,
+      existing,
+      existing.costPrice,
+      salePrice,
+      inputMode,
+      correlationId,
+    );
   }
 
   /** Exactly one of dto.salePrice/profit/marginPercentBasisPoints must be defined -- callers only reach this once driverCount === 1 has already been established. */
@@ -169,12 +212,14 @@ export class PricingService {
   }
 
   private async persist(
+    actingUserId: string,
     businessId: string,
     productId: string,
     existing: ExistingPricing | null,
     costPrice: number,
     salePrice: number,
     inputMode: PricingInputMode,
+    correlationId: string,
   ) {
     if (!isValidMoneyAmount(salePrice)) {
       throw new AppException(
@@ -191,12 +236,37 @@ export class PricingService {
     const { profit, marginPercentBasisPoints } = resolvePricing(costPrice, salePrice);
     const data = { costPrice, salePrice, profit, marginPercentBasisPoints, inputMode };
 
-    if (existing) {
-      return this.prisma.productPricing.update({ where: { id: existing.id }, data });
-    }
     try {
-      return await this.prisma.productPricing.create({
-        data: { id: this.ids.generate(), businessId, productId, ...data },
+      // One transaction (D-042): the mutation and its audit record commit
+      // or roll back together, same pattern as MembershipsService/
+      // ConfigurationService.
+      return await this.prisma.$transaction(async (tx) => {
+        const result = existing
+          ? await tx.productPricing.update({ where: { id: existing.id }, data })
+          : await tx.productPricing.create({
+              data: { id: this.ids.generate(), businessId, productId, ...data },
+            });
+
+        await this.audit.record(tx, {
+          businessId,
+          actorUserId: actingUserId,
+          action: existing ? "product_pricing.updated" : "product_pricing.created",
+          targetType: "product_pricing",
+          targetId: result.id,
+          before: existing
+            ? {
+                costPrice: existing.costPrice,
+                salePrice: existing.salePrice,
+                profit: existing.profit,
+                marginPercentBasisPoints: existing.marginPercentBasisPoints,
+                inputMode: existing.inputMode,
+              }
+            : undefined,
+          after: data,
+          correlationId,
+        });
+
+        return result;
       });
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
