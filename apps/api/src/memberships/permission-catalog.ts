@@ -86,7 +86,8 @@ export const PERMISSION_CATALOG: readonly PermissionDefinition[] = [
     code: "pricing.manage",
     module: "pricing",
     action: "manage",
-    description: "Set and change a product's cost, sale price, profit, and Margin %.",
+    description:
+      "Set and change a product's cost, sale price, profit, and Margin %, and manage optional price lists.",
   },
 ];
 

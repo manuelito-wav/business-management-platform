@@ -53,15 +53,48 @@ function definePlainSection<T extends object>(
  * key + JSON value, see schema.prisma), so a later module can register a
  * new section here without a schema migration. This is configuration data,
  * validated against a fixed shape -- never arbitrary code.
+ *
+ * `satisfies`, not a `: {...}` type annotation: an annotation would widen
+ * every entry's `defaultValue` to the shared `object` bound, which is
+ * exactly the bound `ConfigurationSections` below reads back out --
+ * losing each section's own shape (e.g. `featureFlags.priceLists`) for
+ * every consumer. `satisfies` still checks each entry against
+ * `ConfigurationSectionDefinition<object>` without discarding the more
+ * specific inferred type.
  */
-export const CONFIGURATION_REGISTRY: {
-  readonly [K in ConfigurationKey]: ConfigurationSectionDefinition<object>;
-} = {
+export const CONFIGURATION_REGISTRY = {
   paymentMethods: definePlainSection(PaymentMethodsConfig, PAYMENT_METHODS_DEFAULT),
   featureFlags: definePlainSection(FeatureFlagsConfig, FEATURE_FLAGS_DEFAULT),
   policies: definePlainSection(PoliciesConfig, POLICIES_DEFAULT),
-};
+} satisfies Record<ConfigurationKey, ConfigurationSectionDefinition<object>>;
 
 export type ConfigurationSections = {
   [K in ConfigurationKey]: (typeof CONFIGURATION_REGISTRY)[K]["defaultValue"];
 };
+
+/**
+ * Resolves one section's value for a specific, statically-known key `K`
+ * (a generic type parameter, not a runtime loop variable over
+ * `ConfigurationKey`) so its return type stays that section's own shape
+ * (e.g. `FeatureFlagsConfig`, not the `PaymentMethodsConfig &
+ * FeatureFlagsConfig & PoliciesConfig` intersection TypeScript would
+ * otherwise compute for a write indexed by the general union type).
+ */
+export function resolveConfigurationSection<K extends ConfigurationKey>(
+  key: K,
+  storedValue: unknown,
+): ConfigurationSections[K] {
+  const definition = CONFIGURATION_REGISTRY[key];
+  const resolved =
+    storedValue === undefined ? definition.defaultValue : definition.sanitize(storedValue);
+  // TypeScript cannot correlate a generic indexed access
+  // (`CONFIGURATION_REGISTRY[key]` for `key: K`) back to `ConfigurationSections[K]`
+  // -- a known limitation of generic indexed access into a mapped type
+  // (it widens `definition` to the union of every section, rather than
+  // narrowing to the one matching `K`). By construction this always
+  // holds: `ConfigurationSections[K]` is directly defined as
+  // `CONFIGURATION_REGISTRY[K]["defaultValue"]`, and `resolved` is
+  // either exactly that `defaultValue` or `sanitize`'s same-typed return
+  // value for the very entry `key` selected.
+  return resolved as ConfigurationSections[K];
+}

@@ -104,6 +104,8 @@ model Business {
   products           Product[]
   productIdentifiers ProductIdentifier[]
   productPricings    ProductPricing[]
+  priceLists         PriceList[]
+  priceListEntries   PriceListEntry[]
 
   @@map("businesses")
 }
@@ -315,13 +317,14 @@ model Product {
   createdAt   DateTime           @default(now()) @map("created_at")
   updatedAt   DateTime           @updatedAt @map("updated_at")
 
-  business    Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  business         Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
   // Composite FK: prevents assigning a category that belongs to a
   // different business (cross-tenant leakage), same pattern as
   // Membership.role.
-  category    Category            @relation(fields: [categoryId, businessId], references: [id, businessId])
-  identifiers ProductIdentifier[]
-  pricing     ProductPricing?
+  category         Category            @relation(fields: [categoryId, businessId], references: [id, businessId])
+  identifiers      ProductIdentifier[]
+  pricing          ProductPricing?
+  priceListEntries PriceListEntry[]
 
   @@unique([id, businessId])
   @@index([businessId, name])
@@ -405,4 +408,66 @@ model ProductPricing {
   @@unique([productId, businessId])
   @@index([businessId])
   @@map("product_pricing")
+}
+
+enum PriceListStatus {
+  active
+  inactive
+}
+
+// Optional, disabled-by-default feature (SPECS.md 7.5/19.1), gated by
+// BusinessConfiguration's featureFlags.priceLists (see
+// configuration/sections/feature-flags.config.ts) -- ROADMAP.md "keep
+// the feature disabled ... until enabled per business". A named
+// alternate price list (SPECS.md 7.5 examples: Employee, Retail,
+// Wholesale). This checkpoint ships only the data model and a read-only
+// selection boundary (PriceListsService.resolveEffectivePrice) -- no
+// live sale flow consumes it yet; ROADMAP.md's later Phase 8 checkpoint
+// ("enable configurable price lists") is what wires selection into a
+// sale and snapshots the result onto a sale line.
+model PriceList {
+  id         String          @id
+  businessId String          @map("business_id")
+  name       String
+  status     PriceListStatus @default(active)
+  createdAt  DateTime        @default(now()) @map("created_at")
+  updatedAt  DateTime        @updatedAt @map("updated_at")
+
+  business Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  entries  PriceListEntry[]
+
+  @@unique([businessId, name])
+  // Lets PriceListEntry's priceList relation be a composite FK against
+  // (id, businessId), the same cross-tenant defense used throughout
+  // catalog/pricing.
+  @@unique([id, businessId])
+  @@index([businessId])
+  @@map("price_lists")
+}
+
+// One override sale price per (price list, product) pair. Deliberately
+// no cost/profit/Margin % here: those stay single, business-wide facts
+// owned by ProductPricing, never duplicated per list -- a price list
+// only ever overrides what the customer pays, resolved against the same
+// product cost via @bmp/domain's resolvePricing (D-006) if a margin
+// figure is ever needed for one.
+model PriceListEntry {
+  id          String   @id
+  businessId  String   @map("business_id")
+  priceListId String   @map("price_list_id")
+  productId   String   @map("product_id")
+  salePrice   Int      @map("sale_price")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  business  Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  // Composite FKs: prevent an entry from pointing at a price list or
+  // product belonging to a different business.
+  priceList PriceList @relation(fields: [priceListId, businessId], references: [id, businessId], onDelete: Cascade)
+  product   Product   @relation(fields: [productId, businessId], references: [id, businessId], onDelete: Cascade)
+
+  @@unique([priceListId, productId])
+  @@index([businessId])
+  @@index([productId])
+  @@map("price_list_entries")
 }

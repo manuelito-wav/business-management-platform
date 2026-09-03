@@ -8,6 +8,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import {
   CONFIGURATION_KEYS,
   CONFIGURATION_REGISTRY,
+  resolveConfigurationSection,
   type ConfigurationKey,
   type ConfigurationSections,
 } from "./configuration-registry";
@@ -25,13 +26,17 @@ export class ConfigurationService {
     const rows = await this.prisma.businessConfiguration.findMany({ where: { businessId } });
     const storedByKey = new Map(rows.map((row) => [row.key, row.value]));
 
-    const sections = {} as ConfigurationSections;
-    for (const key of CONFIGURATION_KEYS) {
-      const definition = CONFIGURATION_REGISTRY[key];
-      const stored = storedByKey.get(key);
-      sections[key] = stored === undefined ? definition.defaultValue : definition.sanitize(stored);
-    }
-    return sections;
+    // Object.fromEntries's return type is always the loose `{ [k: string]: V }`
+    // shape regardless of how precisely-typed `entries` is -- the same
+    // "TypeScript can't correlate a generic mapped-type write with a
+    // runtime union key" limitation resolveConfigurationSection's own
+    // comment describes, just on the assembling side rather than the
+    // per-key resolution side. One cast back to ConfigurationSections at
+    // this single boundary, not scattered per-field.
+    const entries = CONFIGURATION_KEYS.map(
+      (key) => [key, resolveConfigurationSection(key, storedByKey.get(key))] as const,
+    );
+    return Object.fromEntries(entries) as ConfigurationSections;
   }
 
   /**
