@@ -205,7 +205,7 @@ for a sale; no financial sale is settled yet.
   changing cost preserves sale price while recalculating profit/Margin %. Store
   the selected input mode and resolved values; never automatically increase the
   customer sale price merely because cost changes.
-  - Commit: `feat: add deterministic product pricing`
+  - Commit: `feat: add deterministic product pricing` -- done (7ab900e)
 - Add optional price-list data model and selection boundary, but keep the
   feature disabled and out of the initial POS flow until enabled per business.
   - Commit: `feat: add optional price list foundation`
