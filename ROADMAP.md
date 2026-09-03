@@ -208,7 +208,7 @@ for a sale; no financial sale is settled yet.
   - Commit: `feat: add deterministic product pricing` -- done (7ab900e)
 - Add optional price-list data model and selection boundary, but keep the
   feature disabled and out of the initial POS flow until enabled per business.
-  - Commit: `feat: add optional price list foundation`
+  - Commit: `feat: add optional price list foundation` -- done (287c6a8)
 - Implement registers, authorized register selection, operational sessions,
   configurable opening/closing policy, and status. Do not permanently assign a
   register to a user.
