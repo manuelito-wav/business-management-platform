@@ -11,6 +11,10 @@ overrides:
   # though this project only uses @prisma/adapter-pg for Postgres). Force
   # the patched version.
   mysql2: ">=3.22.0"
+  # GHSA-x5fp-wj9c-mxmx / GHSA-4mjr-xmp4-gh2g: prototype pollution / DoS in
+  # qs <6.16.0, pulled in transitively by express (via @nestjs/platform-
+  # express) and by supertest's superagent. Force the patched version.
+  qs: ">=6.16.0"
 allowBuilds:
   "@prisma/engines": true
   "@swc/core": true
