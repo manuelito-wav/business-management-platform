@@ -288,7 +288,8 @@ export class ProductsService {
     return null;
   }
 
-  private async requireInBusiness(businessId: string, productId: string) {
+  /** Also used by PricingService to validate a productId belongs to the same business, without PricingModule reading the products table itself. */
+  async requireInBusiness(businessId: string, productId: string) {
     const product = await this.prisma.product.findUnique({ where: { id: productId } });
     if (!product || product.businessId !== businessId) {
       throw new AppException(

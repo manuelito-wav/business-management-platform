@@ -82,6 +82,12 @@ export const PERMISSION_CATALOG: readonly PermissionDefinition[] = [
     action: "manage",
     description: "Create and manage categories and products.",
   },
+  {
+    code: "pricing.manage",
+    module: "pricing",
+    action: "manage",
+    description: "Set and change a product's cost, sale price, profit, and Margin %.",
+  },
 ];
 
 export interface PredefinedRoleDefinition {
@@ -110,6 +116,7 @@ export const PREDEFINED_ROLES: readonly PredefinedRoleDefinition[] = [
       "register.override_close_conflict",
       "audit.view",
       "catalog.manage",
+      "pricing.manage",
     ],
   },
   {
@@ -123,6 +130,7 @@ export const PREDEFINED_ROLES: readonly PredefinedRoleDefinition[] = [
       "sales.discount",
       "sales.refund",
       "catalog.manage",
+      "pricing.manage",
     ],
   },
   { name: "Employee", permissionCodes: ["sales.create"] },
