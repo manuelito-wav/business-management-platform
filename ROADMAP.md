@@ -194,7 +194,7 @@ for a sale; no financial sale is settled yet.
   grams as the internal authoritative precision (D-008), and explicit
   quantity validation/conversion rules. Do not encode floating-point values in
   the API or database.
-  - Commit: `feat: add weighted product support`
+  - Commit: `feat: add weighted product support` -- done (b849bd2)
 - Implement a pure product-pricing service exposing the four synchronized
   values: Cost, Sale Price, Profit, and Margin %. Use the approved cost-based
   Margin % formula (for example, cost $50 / sale $100 means profit $50 and
