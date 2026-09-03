@@ -326,4 +326,107 @@ describe("Product catalog: categories, products, and identifiers", () => {
 
     await expect(products.search(employee.id, business.id, {})).resolves.toBeDefined();
   });
+
+  // -- Weighted products (D-008) ------------------------------------------
+
+  it("creates a weighted product with a weightUnit", async () => {
+    const { owner, business } = await createOwner("prod-owner11@kiosk.test");
+    const category = await createCategory(owner.id, business.id);
+
+    const product = await products.create(owner.id, business.id, {
+      name: "Bananas",
+      categoryId: category.id,
+      saleMode: "weighted",
+      weightUnit: "kg",
+    });
+
+    expect(product.saleMode).toBe("weighted");
+    expect(product.weightUnit).toBe("kg");
+  });
+
+  it("rejects a weighted product missing weightUnit", async () => {
+    const { owner, business } = await createOwner("prod-owner12@kiosk.test");
+    const category = await createCategory(owner.id, business.id);
+
+    await expect(
+      products.create(owner.id, business.id, {
+        name: "Bananas",
+        categoryId: category.id,
+        saleMode: "weighted",
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_WEIGHT_UNIT_CONFIGURATION" });
+  });
+
+  it("rejects a unit product that supplies a weightUnit, explicit or default saleMode", async () => {
+    const { owner, business } = await createOwner("prod-owner13@kiosk.test");
+    const category = await createCategory(owner.id, business.id);
+
+    await expect(
+      products.create(owner.id, business.id, {
+        name: "Cola",
+        categoryId: category.id,
+        saleMode: "unit",
+        weightUnit: "g",
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_WEIGHT_UNIT_CONFIGURATION" });
+
+    await expect(
+      products.create(owner.id, business.id, {
+        name: "Cola",
+        categoryId: category.id,
+        weightUnit: "g",
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_WEIGHT_UNIT_CONFIGURATION" });
+  });
+
+  it("requires weightUnit when updating a product from unit to weighted", async () => {
+    const { owner, business } = await createOwner("prod-owner14@kiosk.test");
+    const category = await createCategory(owner.id, business.id);
+    const product = await products.create(owner.id, business.id, {
+      name: "Cheese",
+      categoryId: category.id,
+    });
+
+    await expect(
+      products.update(owner.id, business.id, product.id, { saleMode: "weighted" }),
+    ).rejects.toMatchObject({ code: "INVALID_WEIGHT_UNIT_CONFIGURATION" });
+
+    const updated = await products.update(owner.id, business.id, product.id, {
+      saleMode: "weighted",
+      weightUnit: "g",
+    });
+    expect(updated.saleMode).toBe("weighted");
+    expect(updated.weightUnit).toBe("g");
+  });
+
+  it("clears weightUnit when updating a product back from weighted to unit", async () => {
+    const { owner, business } = await createOwner("prod-owner15@kiosk.test");
+    const category = await createCategory(owner.id, business.id);
+    const product = await products.create(owner.id, business.id, {
+      name: "Ham",
+      categoryId: category.id,
+      saleMode: "weighted",
+      weightUnit: "kg",
+    });
+
+    const updated = await products.update(owner.id, business.id, product.id, {
+      saleMode: "unit",
+    });
+
+    expect(updated.saleMode).toBe("unit");
+    expect(updated.weightUnit).toBeNull();
+  });
+
+  it("rejects an update that sets weightUnit on a product that stays unit", async () => {
+    const { owner, business } = await createOwner("prod-owner16@kiosk.test");
+    const category = await createCategory(owner.id, business.id);
+    const product = await products.create(owner.id, business.id, {
+      name: "Cola",
+      categoryId: category.id,
+    });
+
+    await expect(
+      products.update(owner.id, business.id, product.id, { weightUnit: "g" }),
+    ).rejects.toMatchObject({ code: "INVALID_WEIGHT_UNIT_CONFIGURATION" });
+  });
 });

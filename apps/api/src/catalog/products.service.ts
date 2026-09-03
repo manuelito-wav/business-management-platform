@@ -33,6 +33,9 @@ export class ProductsService {
     await this.memberships.requirePermission(actingUserId, businessId, "catalog.manage");
     await this.categories.requireInBusiness(businessId, dto.categoryId);
 
+    const saleMode = dto.saleMode ?? "unit";
+    const weightUnit = this.resolveWeightUnit(saleMode, dto.weightUnit);
+
     try {
       return await this.prisma.$transaction(async (tx) => {
         const product = await tx.product.create({
@@ -42,7 +45,8 @@ export class ProductsService {
             categoryId: dto.categoryId,
             name: dto.name,
             description: dto.description,
-            saleMode: dto.saleMode ?? "unit",
+            saleMode,
+            weightUnit,
             imageUrl: dto.imageUrl,
           },
         });
@@ -79,10 +83,23 @@ export class ProductsService {
 
   async update(actingUserId: string, businessId: string, productId: string, dto: UpdateProductDto) {
     await this.memberships.requirePermission(actingUserId, businessId, "catalog.manage");
-    await this.requireInBusiness(businessId, productId);
+    const existing = await this.requireInBusiness(businessId, productId);
     if (dto.categoryId) {
       await this.categories.requireInBusiness(businessId, dto.categoryId);
     }
+
+    // Re-validate the *effective* (post-update) saleMode/weightUnit pair,
+    // not just the fields present in this particular PATCH -- a request
+    // that only flips saleMode must still satisfy the invariant. Always
+    // writing the resolved value (rather than only when dto.weightUnit is
+    // present) is what clears a stale weightUnit when a product
+    // transitions from weighted back to unit.
+    const effectiveSaleMode = dto.saleMode ?? existing.saleMode;
+    const weightUnit = this.resolveWeightUnitForUpdate(
+      effectiveSaleMode,
+      dto.weightUnit,
+      existing.weightUnit,
+    );
 
     return this.prisma.product.update({
       where: { id: productId },
@@ -91,6 +108,7 @@ export class ProductsService {
         description: dto.description,
         categoryId: dto.categoryId,
         saleMode: dto.saleMode,
+        weightUnit,
         imageUrl: dto.imageUrl,
         status: dto.status,
       },
@@ -213,6 +231,61 @@ export class ProductsService {
       );
     }
     await this.prisma.productIdentifier.delete({ where: { id: identifierId } });
+  }
+
+  /**
+   * D-008: weightUnit is required exactly when saleMode is "weighted" and
+   * forbidden otherwise -- enforced here (service level) rather than as a
+   * Postgres CHECK constraint, per the schema doc comment on Product.
+   */
+  private resolveWeightUnit(
+    saleMode: "unit" | "weighted",
+    weightUnit: "g" | "kg" | null | undefined,
+  ): "g" | "kg" | null {
+    if (saleMode === "weighted") {
+      if (!weightUnit) {
+        throw new AppException(
+          "INVALID_WEIGHT_UNIT_CONFIGURATION",
+          'A weighted product requires a weightUnit ("g" or "kg").',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+      return weightUnit;
+    }
+    if (weightUnit) {
+      throw new AppException(
+        "INVALID_WEIGHT_UNIT_CONFIGURATION",
+        "weightUnit is only allowed for weighted products.",
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    return null;
+  }
+
+  /**
+   * Same invariant as resolveWeightUnit, but for a PATCH: the row's
+   * *existing* weightUnit is only a valid source when the effective
+   * saleMode is "weighted" (e.g. a PATCH that flips saleMode without
+   * repeating weightUnit). When the effective saleMode is "unit", a
+   * leftover weightUnit from a prior weighted state is not a client
+   * error -- it's silently cleared to null. Only a weightUnit the client
+   * *explicitly* sent in this same request is validated as forbidden.
+   */
+  private resolveWeightUnitForUpdate(
+    saleMode: "unit" | "weighted",
+    dtoWeightUnit: "g" | "kg" | undefined,
+    existingWeightUnit: "g" | "kg" | null,
+  ): "g" | "kg" | null {
+    if (saleMode === "weighted") {
+      return this.resolveWeightUnit(
+        saleMode,
+        dtoWeightUnit !== undefined ? dtoWeightUnit : existingWeightUnit,
+      );
+    }
+    if (dtoWeightUnit !== undefined) {
+      return this.resolveWeightUnit(saleMode, dtoWeightUnit);
+    }
+    return null;
   }
 
   private async requireInBusiness(businessId: string, productId: string) {

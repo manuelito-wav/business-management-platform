@@ -280,6 +280,11 @@ enum ProductStatus {
   inactive
 }
 
+enum ProductWeightUnit {
+  g
+  kg
+}
+
 // Pricing (cost/salePrice/profit/marginPercent) is deliberately not here --
 // ROADMAP.md's next checkpoint ("add deterministic product pricing") owns
 // that as its own service and storage. `imageUrl` is a plain optional URL
@@ -287,17 +292,25 @@ enum ProductStatus {
 // shortcuts, the catalog stays fully searchable without them; the infra
 // doc's own sequencing introduces S3-compatible storage "when images...
 // are enabled", i.e. with a real upload flow, not preemptively here).
+// `weightUnit` is display/input preference only (D-008): the authoritative
+// internal unit for any weighted quantity is always the integer gram (see
+// @bmp/domain's weight.ts) -- this column never stores a quantity itself.
+// Required exactly when saleMode is weighted, enforced in
+// ProductsService, not at the schema level (Postgres CHECK constraints
+// spanning two columns are avoidable complexity Prisma does not model
+// natively; this project prefers explicit service-level validation).
 model Product {
-  id          String          @id
-  businessId  String          @map("business_id")
-  categoryId  String          @map("category_id")
+  id          String             @id
+  businessId  String             @map("business_id")
+  categoryId  String             @map("category_id")
   name        String
   description String?
-  saleMode    ProductSaleMode @default(unit) @map("sale_mode")
-  imageUrl    String?         @map("image_url")
-  status      ProductStatus   @default(active)
-  createdAt   DateTime        @default(now()) @map("created_at")
-  updatedAt   DateTime        @updatedAt @map("updated_at")
+  saleMode    ProductSaleMode    @default(unit) @map("sale_mode")
+  weightUnit  ProductWeightUnit? @map("weight_unit")
+  imageUrl    String?            @map("image_url")
+  status      ProductStatus      @default(active)
+  createdAt   DateTime           @default(now()) @map("created_at")
+  updatedAt   DateTime           @updatedAt @map("updated_at")
 
   business    Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
   // Composite FK: prevents assigning a category that belongs to a

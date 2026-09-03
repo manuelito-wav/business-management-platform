@@ -19,6 +19,11 @@ export class UpdateProductDto {
   @IsIn(["unit", "weighted"])
   saleMode?: "unit" | "weighted";
 
+  /** Display/input preference only (D-008) -- required when saleMode is "weighted", rejected otherwise; enforced in ProductsService. */
+  @IsOptional()
+  @IsIn(["g", "kg"])
+  weightUnit?: "g" | "kg";
+
   @IsOptional()
   @IsUrl()
   imageUrl?: string;

@@ -223,4 +223,33 @@ describe("Product catalog (HTTP)", () => {
     ]);
     expect(secondPage.body.pagination.nextCursor).toBeNull();
   });
+
+  it("creates a weighted product with a weightUnit and rejects an invalid combination with a 400", async () => {
+    const ownerToken = await registerAndLogin("catalog-http-owner6@kiosk.test");
+    const businessId = await createBusiness(ownerToken, "Catalog HTTP Kiosk 6");
+    const category = await request(app.getHttpServer())
+      .post(`/businesses/${businessId}/categories`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ name: "Produce" })
+      .expect(201);
+
+    const created = await request(app.getHttpServer())
+      .post(`/businesses/${businessId}/products`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({
+        name: "Bananas",
+        categoryId: category.body.id,
+        saleMode: "weighted",
+        weightUnit: "kg",
+      })
+      .expect(201);
+    expect(created.body.weightUnit).toBe("kg");
+
+    const denied = await request(app.getHttpServer())
+      .post(`/businesses/${businessId}/products`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ name: "Apples", categoryId: category.body.id, saleMode: "weighted" })
+      .expect(400);
+    expect(denied.body.error.code).toBe("INVALID_WEIGHT_UNIT_CONFIGURATION");
+  });
 });

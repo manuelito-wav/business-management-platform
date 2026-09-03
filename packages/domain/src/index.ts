@@ -6,3 +6,11 @@
 
 export { type Clock, SystemClock } from "./clock";
 export { type IdGenerator, Uuidv4Generator, Uuidv7Generator } from "./id-generator";
+export {
+  assertValidGramQuantity,
+  formatGramsAsKilograms,
+  GRAMS_PER_KILOGRAM,
+  isValidGramQuantity,
+  parseKilogramsToGrams,
+  type WeightUnit,
+} from "./weight";

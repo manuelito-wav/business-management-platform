@@ -24,10 +24,14 @@ export class CreateProductDto {
   @MinLength(1)
   categoryId!: string;
 
-  /** Weighted mode (GR/KG quantities) is fully implemented in the next checkpoint; unit is the safe default. */
   @IsOptional()
   @IsIn(["unit", "weighted"])
   saleMode?: "unit" | "weighted";
+
+  /** Display/input preference only (D-008) -- required when saleMode is "weighted", rejected otherwise; enforced in ProductsService. */
+  @IsOptional()
+  @IsIn(["g", "kg"])
+  weightUnit?: "g" | "kg";
 
   @IsOptional()
   @IsUrl()
