@@ -66,7 +66,7 @@ export class ProductsService {
 
         return tx.product.findUniqueOrThrow({
           where: { id: product.id },
-          include: { identifiers: true },
+          include: { identifiers: true, pricing: true },
         });
       });
     } catch (error) {
@@ -112,7 +112,7 @@ export class ProductsService {
         imageUrl: dto.imageUrl,
         status: dto.status,
       },
-      include: { identifiers: true },
+      include: { identifiers: true, pricing: true },
     });
   }
 
@@ -120,7 +120,7 @@ export class ProductsService {
     await this.memberships.requireActiveMembership(actingUserId, businessId);
     const product = await this.prisma.product.findUnique({
       where: { id: productId },
-      include: { identifiers: true },
+      include: { identifiers: true, pricing: true },
     });
     if (!product || product.businessId !== businessId) {
       throw new AppException(
@@ -137,7 +137,12 @@ export class ProductsService {
    * the natural default for browsing a catalog. Still cursor-paginated on
    * `id` (D-041): Prisma resolves the cursor row's position within the
    * full (name, id) ordering, so ties on name are handled correctly
-   * without a compound unique index just for pagination.
+   * without a compound unique index just for pagination. `pricing` is
+   * included so the web app's POS reference cache can build its
+   * "relevant prices" snapshot (ROADMAP.md "add local POS reference
+   * cache") from this one paginated endpoint rather than one request per
+   * product -- it's the same data GET .../pricing already exposes to any
+   * active member, not a new exposure.
    */
   async search(actingUserId: string, businessId: string, options: ListProductsOptions) {
     await this.memberships.requireActiveMembership(actingUserId, businessId);
@@ -162,7 +167,7 @@ export class ProductsService {
             }
           : {}),
       },
-      include: { identifiers: true },
+      include: { identifiers: true, pricing: true },
       orderBy: [{ name: "asc" }, { id: "asc" }],
       take: limit + 1,
       ...(options.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),

@@ -53,6 +53,7 @@ describe("Product catalog: categories, products, and identifiers", () => {
   });
 
   beforeEach(async () => {
+    await prisma.productPricing.deleteMany();
     await prisma.productIdentifier.deleteMany();
     await prisma.product.deleteMany();
     await prisma.category.deleteMany();
@@ -159,6 +160,34 @@ describe("Product catalog: categories, products, and identifiers", () => {
     expect(product.identifiers).toHaveLength(2);
     const sku = product.identifiers.find((identifier) => identifier.type === "sku");
     expect(sku?.normalizedValue).toBe("CC-500");
+    expect(product.pricing).toBeNull();
+  });
+
+  it("includes pricing in product reads/search once it has been set (the web POS cache's price source)", async () => {
+    const { owner, business } = await createOwner("prod-owner1b@kiosk.test");
+    const category = await createCategory(owner.id, business.id);
+    const product = await products.create(owner.id, business.id, {
+      name: "Sprite 500ml",
+      categoryId: category.id,
+    });
+    await prisma.productPricing.create({
+      data: {
+        id: crypto.randomUUID(),
+        businessId: business.id,
+        productId: product.id,
+        costPrice: 5000,
+        salePrice: 7500,
+        profit: 2500,
+        marginPercentBasisPoints: 5000,
+        inputMode: "sale_price",
+      },
+    });
+
+    const found = await products.findOne(owner.id, business.id, product.id);
+    expect(found.pricing?.salePrice).toBe(7500);
+
+    const result = await products.search(owner.id, business.id, { search: "Sprite" });
+    expect(result.data[0]?.pricing?.salePrice).toBe(7500);
   });
 
   it("rejects a product whose category belongs to a different business", async () => {
