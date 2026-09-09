@@ -15,6 +15,18 @@ overrides:
   # qs <6.16.0, pulled in transitively by express (via @nestjs/platform-
   # express) and by supertest's superagent. Force the patched version.
   qs: ">=6.16.0"
+  # GHSA-wc9g-mqfw-jrwm / GHSA-535w-7cp7-47q4 / GHSA-qvfw-j98x-7q72 (and
+  # GHSA-qfvm-cv95-jqjf, which has no fix yet as of this override): DoS/
+  # limit-bypass issues in multer <2.3.0, pulled in transitively by
+  # @nestjs/platform-express even though this project has no file-upload
+  # endpoint wired up yet (D-020). Force the best available patched
+  # version.
+  multer: ">=2.3.0"
+  # GHSA-2883-xcg3-v3hh: CPU exhaustion in js-yaml <4.3.2 via empty merge
+  # sources, pulled in transitively by eslint's own config loading
+  # (@eslint/eslintrc) -- a lint-time devDependency, not shipped. Pinned
+  # within the 4.x line eslint expects, not the 5.x major.
+  js-yaml: "^4.3.2"
 allowBuilds:
   "@prisma/engines": true
   "@swc/core": true
