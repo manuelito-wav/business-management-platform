@@ -212,7 +212,7 @@ for a sale; no financial sale is settled yet.
 - Implement registers, authorized register selection, operational sessions,
   configurable opening/closing policy, and status. Do not permanently assign a
   register to a user.
-  - Commit: `feat: add register operational sessions`
+  - Commit: `feat: add register operational sessions` -- done (130a519)
 - Introduce the minimal Dexie-backed local POS-data foundation: versioned
   read-only snapshots of the active business's products, categories, relevant
   prices, and POS configuration, refreshed during normal online use. Validate
