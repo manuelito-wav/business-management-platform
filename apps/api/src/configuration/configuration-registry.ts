@@ -3,12 +3,14 @@ import { validateSync } from "class-validator";
 import { FEATURE_FLAGS_DEFAULT, FeatureFlagsConfig } from "./sections/feature-flags.config";
 import { PAYMENT_METHODS_DEFAULT, PaymentMethodsConfig } from "./sections/payment-methods.config";
 import { POLICIES_DEFAULT, PoliciesConfig } from "./sections/policies.config";
+import { REGISTER_POLICY_DEFAULT, RegisterPolicyConfig } from "./sections/register-policy.config";
 
-export type ConfigurationKey = "paymentMethods" | "featureFlags" | "policies";
+export type ConfigurationKey = "paymentMethods" | "featureFlags" | "policies" | "registerPolicy";
 export const CONFIGURATION_KEYS: readonly ConfigurationKey[] = [
   "paymentMethods",
   "featureFlags",
   "policies",
+  "registerPolicy",
 ];
 
 export interface ConfigurationSectionDefinition<T extends object> {
@@ -66,6 +68,7 @@ export const CONFIGURATION_REGISTRY = {
   paymentMethods: definePlainSection(PaymentMethodsConfig, PAYMENT_METHODS_DEFAULT),
   featureFlags: definePlainSection(FeatureFlagsConfig, FEATURE_FLAGS_DEFAULT),
   policies: definePlainSection(PoliciesConfig, POLICIES_DEFAULT),
+  registerPolicy: definePlainSection(RegisterPolicyConfig, REGISTER_POLICY_DEFAULT),
 } satisfies Record<ConfigurationKey, ConfigurationSectionDefinition<object>>;
 
 export type ConfigurationSections = {

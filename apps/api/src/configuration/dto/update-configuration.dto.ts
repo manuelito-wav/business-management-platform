@@ -4,6 +4,7 @@ import { IANA_TIMEZONES } from "../../common/iana-timezones";
 import { FeatureFlagsConfig } from "../sections/feature-flags.config";
 import { PaymentMethodsConfig } from "../sections/payment-methods.config";
 import { PoliciesConfig } from "../sections/policies.config";
+import { RegisterPolicyConfig } from "../sections/register-policy.config";
 
 export class UpdateConfigurationDto {
   /** D-035: per-business configuration value, not a permanent constant. */
@@ -25,4 +26,9 @@ export class UpdateConfigurationDto {
   @ValidateNested()
   @Type(() => PoliciesConfig)
   policies?: PoliciesConfig;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => RegisterPolicyConfig)
+  registerPolicy?: RegisterPolicyConfig;
 }

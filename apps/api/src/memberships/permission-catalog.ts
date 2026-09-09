@@ -47,6 +47,12 @@ export const PERMISSION_CATALOG: readonly PermissionDefinition[] = [
     description: "Force-close another user's active register despite a conflict.",
   },
   {
+    code: "register.manage",
+    module: "register",
+    action: "manage",
+    description: "Create and manage the business's registers.",
+  },
+  {
     code: "reports.view",
     module: "reports",
     action: "view",
@@ -115,6 +121,7 @@ export const PREDEFINED_ROLES: readonly PredefinedRoleDefinition[] = [
       "roles.manage",
       "reports.view",
       "register.override_close_conflict",
+      "register.manage",
       "audit.view",
       "catalog.manage",
       "pricing.manage",
@@ -126,6 +133,7 @@ export const PREDEFINED_ROLES: readonly PredefinedRoleDefinition[] = [
       "inventory.adjust",
       "inventory.record_loss",
       "register.close",
+      "register.manage",
       "reports.view",
       "sales.cancel",
       "sales.discount",

@@ -106,6 +106,8 @@ model Business {
   productPricings    ProductPricing[]
   priceLists         PriceList[]
   priceListEntries   PriceListEntry[]
+  registers          Register[]
+  registerSessions   RegisterSession[]
 
   @@map("businesses")
 }
@@ -470,4 +472,86 @@ model PriceListEntry {
   @@index([businessId])
   @@index([productId])
   @@map("price_list_entries")
+}
+
+enum RegisterStatus {
+  active
+  inactive
+}
+
+// Registers belong to the business, never permanently to a user
+// (SPECS.md 11.1, D-009) -- a user only "operates" one via a
+// RegisterSession (below), for the duration of that session.
+model Register {
+  id         String         @id
+  businessId String         @map("business_id")
+  name       String
+  status     RegisterStatus @default(active)
+  createdAt  DateTime       @default(now()) @map("created_at")
+  updatedAt  DateTime       @updatedAt @map("updated_at")
+
+  business Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  sessions RegisterSession[]
+
+  @@unique([businessId, name])
+  // Lets RegisterSession's register relation be a composite FK against
+  // (id, businessId), the same cross-tenant defense used throughout.
+  @@unique([id, businessId])
+  @@index([businessId])
+  @@map("registers")
+}
+
+enum RegisterSessionStatus {
+  open
+  closed
+}
+
+// One operational session per register-use (SPECS.md 11.1/11.2, D-009):
+// a user manually selects an authorized register and opens a session to
+// operate it, closing it when done. `userId` is a plain reference, not a
+// foreign key, for the same reason as AuditEvent.actorUserId -- D-043
+// lists "register closes" among the immutable operational-fact tables,
+// and a closed session is exactly that kind of historical fact; it must
+// outlive the user it describes even after a later checkpoint adds
+// close-time expected/counted/discrepancy fields on top of this same
+// table. `openingAmount` is the optional starting cash/change fund
+// (SPECS.md 11.6), required or not per the business's own
+// registerPolicy configuration (registerPolicy.requireOpeningAmount) --
+// enforced in RegisterSessionsService, not the schema. Only the session's
+// own user may close it in this checkpoint; the multi-user conflict/
+// override policy for closing someone else's active session
+// (SPECS.md 11.3) is intentionally not implemented here -- see
+// DECISIONS.md "Pending decisions" and ROADMAP.md's later "register
+// closing and discrepancy handling" checkpoint, which is what the
+// already-seeded register.close/register.override_close_conflict
+// permissions are for.
+model RegisterSession {
+  id         String                @id
+  businessId String                @map("business_id")
+  registerId String                @map("register_id")
+  userId     String                @map("user_id")
+  status     RegisterSessionStatus @default(open)
+
+  // Mirrors `registerId` while status is "open"; set to null the moment
+  // the session closes. The unique constraint below then turns "at most
+  // one open session per register" into a real database guarantee
+  // (Postgres does not treat NULLs as equal for uniqueness) rather than
+  // an optimistic find-then-create check -- closes the race where two
+  // concurrent opens for the same register could otherwise both pass.
+  activeRegisterId String? @unique @map("active_register_id")
+
+  openingAmount Int? @map("opening_amount")
+
+  openedAt DateTime  @default(now()) @map("opened_at")
+  closedAt DateTime? @map("closed_at")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  // Composite FK: prevents a session from pointing at a register
+  // belonging to a different business, same pattern as Category/Product.
+  register Register @relation(fields: [registerId, businessId], references: [id, businessId], onDelete: Cascade)
+
+  @@index([businessId])
+  @@index([registerId])
+  @@index([userId])
+  @@map("register_sessions")
 }
