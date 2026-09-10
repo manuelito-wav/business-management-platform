@@ -240,7 +240,7 @@ for a sale; no financial sale is settled yet.
   - Commit: `feat: add stock adjustments and losses` -- done (e310543)
 - Allow negative stock by design and surface it as an operational warning, never
   as an implicit sale failure. Add low-stock/minimum-stock projections.
-  - Commit: `feat: support negative stock and alerts`
+  - Commit: `feat: support negative stock and alerts` -- done (431db77)
 - Add expiration tracking disabled by default, enabled per business, with
   product/batch expiration data, configurable near-expiration windows, and
   informational-only near-expiration/expiration alerts. An alert must never
