@@ -3,9 +3,11 @@ import {
   ArrayMaxSize,
   IsArray,
   IsIn,
+  IsInt,
   IsOptional,
   IsString,
   IsUrl,
+  Min,
   MinLength,
   ValidateNested,
 } from "class-validator";
@@ -36,6 +38,12 @@ export class CreateProductDto {
   @IsOptional()
   @IsUrl()
   imageUrl?: string;
+
+  /** Same native inventory unit as stock (D-008) -- whole units, or grams when saleMode is "weighted" (SPECS.md 7.3). */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  minimumStock?: number;
 
   @IsOptional()
   @IsArray()

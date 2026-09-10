@@ -42,6 +42,17 @@ export interface ProductStockView {
   updatedAt: Date | null;
 }
 
+export interface StockAlertView {
+  productId: string;
+  productName: string;
+  quantityOnHand: number;
+  minimumStock: number | null;
+  /** quantityOnHand < 0 (D-015/SPECS.md 8.2) -- unconditional, independent of minimumStock. */
+  negative: boolean;
+  /** minimumStock is set and quantityOnHand <= minimumStock (SPECS.md 7.3). */
+  lowStock: boolean;
+}
+
 export interface ReceiveStockInput {
   /** Positive: how many units/grams were received. */
   quantity: number;
@@ -305,6 +316,86 @@ export class InventoryService {
       quantityOnHand: stock?.quantityOnHand ?? 0,
       updatedAt: stock?.updatedAt ?? null,
     };
+  }
+
+  /**
+   * Every product currently needing attention (ROADMAP.md "support
+   * negative stock and alerts"): negative stock is unconditionally
+   * flagged (D-015/SPECS.md 8.2 -- "an operational discrepancy", true
+   * regardless of whether the product tracks a minimum), and separately
+   * a product whose stock has fallen to or below its own configured
+   * `minimumStock` (SPECS.md 7.3) -- products that never set one never
+   * appear on that basis. A product may match both; each is reported
+   * once with both flags. This is a query, not a persisted alert/
+   * notification record -- SPECS.md's notification architecture (the
+   * "Low stock" example) is Phase 8's job; a future Dashboard checkpoint
+   * (ROADMAP.md Phase 5) is expected to poll this.
+   *
+   * Reads its own productStock table directly, but resolves product
+   * names/minimumStock through ProductsService's own methods rather than
+   * `this.prisma.product...` -- InventoryModule does not read the
+   * products table itself (ARCHITECTURE.md "Modules").
+   */
+  async listStockAlerts(actingUserId: string, businessId: string): Promise<StockAlertView[]> {
+    await this.memberships.requireActiveMembership(actingUserId, businessId);
+
+    const [negativeStockRows, lowStockCandidates] = await Promise.all([
+      this.prisma.productStock.findMany({ where: { businessId, quantityOnHand: { lt: 0 } } }),
+      this.products.listWithMinimumStockConfigured(businessId),
+    ]);
+
+    const negativeProducts = await this.products.findManyByIds(
+      businessId,
+      negativeStockRows.map((row) => row.productId),
+    );
+    const negativeProductsById = new Map(negativeProducts.map((product) => [product.id, product]));
+
+    const alertsByProductId = new Map<string, StockAlertView>();
+
+    for (const row of negativeStockRows) {
+      // Defensive: the composite FK guarantees this product exists in the
+      // same business, so it is always found here.
+      const product = negativeProductsById.get(row.productId);
+      if (!product) {
+        continue;
+      }
+      alertsByProductId.set(row.productId, {
+        productId: row.productId,
+        productName: product.name,
+        quantityOnHand: row.quantityOnHand,
+        minimumStock: product.minimumStock,
+        negative: true,
+        lowStock: product.minimumStock !== null && row.quantityOnHand <= product.minimumStock,
+      });
+    }
+
+    if (lowStockCandidates.length > 0) {
+      const candidateStockRows = await this.prisma.productStock.findMany({
+        where: { businessId, productId: { in: lowStockCandidates.map((product) => product.id) } },
+      });
+      const quantityByProductId = new Map(
+        candidateStockRows.map((row) => [row.productId, row.quantityOnHand]),
+      );
+
+      for (const product of lowStockCandidates) {
+        const quantityOnHand = quantityByProductId.get(product.id) ?? 0;
+        // minimumStock is non-null by listWithMinimumStockConfigured's own where clause.
+        if (quantityOnHand > product.minimumStock!) {
+          continue;
+        }
+        const existing = alertsByProductId.get(product.id);
+        alertsByProductId.set(product.id, {
+          productId: product.id,
+          productName: product.name,
+          quantityOnHand,
+          minimumStock: product.minimumStock,
+          negative: existing?.negative ?? quantityOnHand < 0,
+          lowStock: true,
+        });
+      }
+    }
+
+    return [...alertsByProductId.values()];
   }
 
   /**

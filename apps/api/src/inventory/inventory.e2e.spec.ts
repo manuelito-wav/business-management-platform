@@ -61,7 +61,11 @@ describe("Inventory stock (HTTP)", () => {
     return login.body.accessToken as string;
   }
 
-  async function setUpBusinessWithProduct(ownerToken: string, businessName: string) {
+  async function setUpBusinessWithProduct(
+    ownerToken: string,
+    businessName: string,
+    minimumStock?: number,
+  ) {
     const business = await request(app.getHttpServer())
       .post("/businesses")
       .set("Authorization", `Bearer ${ownerToken}`)
@@ -78,7 +82,11 @@ describe("Inventory stock (HTTP)", () => {
     const product = await request(app.getHttpServer())
       .post(`/businesses/${businessId}/products`)
       .set("Authorization", `Bearer ${ownerToken}`)
-      .send({ name: "Cola", categoryId: category.body.id })
+      .send({
+        name: "Cola",
+        categoryId: category.body.id,
+        ...(minimumStock === undefined ? {} : { minimumStock }),
+      })
       .expect(201);
 
     return { businessId, productId: product.body.id as string };
@@ -252,5 +260,74 @@ describe("Inventory stock (HTTP)", () => {
       .set("Authorization", `Bearer ${ownerToken}`)
       .send({ quantity: 1 })
       .expect(400);
+  });
+
+  // -- low-stock / negative-stock alerts -------------------------------------
+
+  it("lists stock alerts over HTTP, reflecting both negative and low-stock products", async () => {
+    const ownerToken = await registerAndLogin("inv-http-owner9@kiosk.test");
+    const { businessId, productId } = await setUpBusinessWithProduct(
+      ownerToken,
+      "Inventory HTTP Kiosk 9",
+      5,
+    );
+
+    const emptyAlerts = await request(app.getHttpServer())
+      .get(`/businesses/${businessId}/inventory/alerts`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .expect(200);
+    // No stock yet (implicit zero) is already <= minimumStock (5).
+    expect(emptyAlerts.body).toEqual([
+      {
+        productId,
+        productName: "Cola",
+        quantityOnHand: 0,
+        minimumStock: 5,
+        negative: false,
+        lowStock: true,
+      },
+    ]);
+
+    await request(app.getHttpServer())
+      .post(`/businesses/${businessId}/products/${productId}/stock/adjust`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ quantity: -1 })
+      .expect(201);
+
+    const afterAdjust = await request(app.getHttpServer())
+      .get(`/businesses/${businessId}/inventory/alerts`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .expect(200);
+    expect(afterAdjust.body).toEqual([
+      {
+        productId,
+        productName: "Cola",
+        quantityOnHand: -1,
+        minimumStock: 5,
+        negative: true,
+        lowStock: true,
+      },
+    ]);
+
+    await request(app.getHttpServer())
+      .post(`/businesses/${businessId}/products/${productId}/stock/receive`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ quantity: 20 })
+      .expect(201);
+
+    const afterReceive = await request(app.getHttpServer())
+      .get(`/businesses/${businessId}/inventory/alerts`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .expect(200);
+    expect(afterReceive.body).toEqual([]);
+  });
+
+  it("rejects an unauthenticated request to the alerts list", async () => {
+    const ownerToken = await registerAndLogin("inv-http-owner10@kiosk.test");
+    const { businessId } = await setUpBusinessWithProduct(ownerToken, "Inventory HTTP Kiosk 10");
+
+    await request(app.getHttpServer())
+      .get(`/businesses/${businessId}/inventory/alerts`)
+      .expect(401);
   });
 });

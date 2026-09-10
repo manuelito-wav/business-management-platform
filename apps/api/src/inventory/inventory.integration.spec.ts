@@ -75,7 +75,7 @@ describe("Inventory ledger and stock projection", () => {
     await prisma.user.deleteMany();
   });
 
-  async function createOwnerWithProduct(emailPrefix: string) {
+  async function createOwnerWithProduct(emailPrefix: string, minimumStock?: number) {
     const owner = await users.create({
       email: `${emailPrefix}@kiosk.test`,
       password: "correct-horse-1",
@@ -85,6 +85,7 @@ describe("Inventory ledger and stock projection", () => {
     const product = await products.create(owner.id, business.id, {
       name: "Cola",
       categoryId: category.id,
+      minimumStock,
     });
     return { owner, business, product };
   }
@@ -540,5 +541,112 @@ describe("Inventory ledger and stock projection", () => {
         lossReason: "other",
       }),
     ).rejects.toMatchObject({ code: "INVENTORY_LOSS_REASON_NOT_ALLOWED" });
+  });
+
+  // -- listStockAlerts -----------------------------------------------------
+
+  it("flags negative stock unconditionally, even without a configured minimumStock", async () => {
+    const { owner, business, product } = await createOwnerWithProduct("inv-alert1");
+    await inventory.adjustStock(
+      owner.id,
+      business.id,
+      product.id,
+      { quantity: -3 },
+      TEST_CORRELATION_ID,
+    );
+
+    const alerts = await inventory.listStockAlerts(owner.id, business.id);
+
+    expect(alerts).toEqual([
+      {
+        productId: product.id,
+        productName: product.name,
+        quantityOnHand: -3,
+        minimumStock: null,
+        negative: true,
+        lowStock: false,
+      },
+    ]);
+  });
+
+  it("flags a product at or below its configured minimumStock, even at zero (no movement yet)", async () => {
+    const { owner, business, product } = await createOwnerWithProduct("inv-alert2", 10);
+
+    const alerts = await inventory.listStockAlerts(owner.id, business.id);
+
+    expect(alerts).toEqual([
+      {
+        productId: product.id,
+        productName: product.name,
+        quantityOnHand: 0,
+        minimumStock: 10,
+        negative: false,
+        lowStock: true,
+      },
+    ]);
+  });
+
+  it("does not flag a product with sufficient stock above its minimum", async () => {
+    const { owner, business, product } = await createOwnerWithProduct("inv-alert3", 10);
+    await inventory.receiveStock(
+      owner.id,
+      business.id,
+      product.id,
+      { quantity: 50 },
+      TEST_CORRELATION_ID,
+    );
+
+    const alerts = await inventory.listStockAlerts(owner.id, business.id);
+
+    expect(alerts).toEqual([]);
+  });
+
+  it("reports both flags once for a product that is both negative and below its minimum", async () => {
+    const { owner, business, product } = await createOwnerWithProduct("inv-alert4", 5);
+    await inventory.adjustStock(
+      owner.id,
+      business.id,
+      product.id,
+      { quantity: -2 },
+      TEST_CORRELATION_ID,
+    );
+
+    const alerts = await inventory.listStockAlerts(owner.id, business.id);
+
+    expect(alerts).toEqual([
+      {
+        productId: product.id,
+        productName: product.name,
+        quantityOnHand: -2,
+        minimumStock: 5,
+        negative: true,
+        lowStock: true,
+      },
+    ]);
+  });
+
+  it("scopes alerts to one business only", async () => {
+    const {
+      owner: ownerA,
+      business: businessA,
+      product: productA,
+    } = await createOwnerWithProduct("inv-alert5a", 10);
+    await createOwnerWithProduct("inv-alert5b", 10);
+
+    const alerts = await inventory.listStockAlerts(ownerA.id, businessA.id);
+
+    expect(alerts.map((alert) => alert.productId)).toEqual([productA.id]);
+  });
+
+  it("rejects a caller with no membership in the business", async () => {
+    const { business } = await createOwnerWithProduct("inv-alert6", 10);
+    const stranger = await users.create({
+      email: "inv-alert6-stranger@kiosk.test",
+      password: "correct-horse-1",
+    });
+
+    await expect(inventory.listStockAlerts(stranger.id, business.id)).rejects.toMatchObject({
+      code: "MEMBERSHIP_NOT_FOUND",
+    });
   });
 });

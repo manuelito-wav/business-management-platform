@@ -1,4 +1,4 @@
-import { IsIn, IsOptional, IsString, IsUrl, MinLength } from "class-validator";
+import { IsIn, IsInt, IsOptional, IsString, IsUrl, Min, MinLength } from "class-validator";
 
 export class UpdateProductDto {
   @IsOptional()
@@ -27,6 +27,12 @@ export class UpdateProductDto {
   @IsOptional()
   @IsUrl()
   imageUrl?: string;
+
+  /** Same native inventory unit as stock (D-008) -- whole units, or grams when saleMode is "weighted" (SPECS.md 7.3). */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  minimumStock?: number;
 
   @IsOptional()
   @IsIn(["active", "inactive"])

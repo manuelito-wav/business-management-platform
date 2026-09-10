@@ -48,6 +48,7 @@ export class ProductsService {
             saleMode,
             weightUnit,
             imageUrl: dto.imageUrl,
+            minimumStock: dto.minimumStock,
           },
         });
 
@@ -110,6 +111,7 @@ export class ProductsService {
         saleMode: dto.saleMode,
         weightUnit,
         imageUrl: dto.imageUrl,
+        minimumStock: dto.minimumStock,
         status: dto.status,
       },
       include: { identifiers: true, pricing: true },
@@ -304,5 +306,36 @@ export class ProductsService {
       );
     }
     return product;
+  }
+
+  /**
+   * Used by InventoryService.listStockAlerts to resolve names/minimumStock
+   * for an arbitrary set of product IDs (e.g. products currently showing
+   * negative stock) without InventoryModule reading the products table
+   * itself (ARCHITECTURE.md "Modules").
+   */
+  async findManyByIds(businessId: string, productIds: string[]) {
+    if (productIds.length === 0) {
+      return [];
+    }
+    return this.prisma.product.findMany({
+      where: { businessId, id: { in: productIds } },
+      select: { id: true, name: true, minimumStock: true },
+    });
+  }
+
+  /**
+   * Used by InventoryService.listStockAlerts (ROADMAP.md "support
+   * negative stock and alerts") to find low-stock candidates without
+   * InventoryModule reading the products table itself. Bounded to
+   * products that opted into a minimumStock threshold at all (SPECS.md
+   * 7.3), typically a small subset of the catalog, never a full
+   * per-business product scan.
+   */
+  async listWithMinimumStockConfigured(businessId: string) {
+    return this.prisma.product.findMany({
+      where: { businessId, minimumStock: { not: null } },
+      select: { id: true, name: true, minimumStock: true },
+    });
   }
 }

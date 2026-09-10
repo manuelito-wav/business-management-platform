@@ -309,17 +309,26 @@ enum ProductWeightUnit {
 // spanning two columns are avoidable complexity Prisma does not model
 // natively; this project prefers explicit service-level validation).
 model Product {
-  id          String             @id
-  businessId  String             @map("business_id")
-  categoryId  String             @map("category_id")
-  name        String
-  description String?
-  saleMode    ProductSaleMode    @default(unit) @map("sale_mode")
-  weightUnit  ProductWeightUnit? @map("weight_unit")
-  imageUrl    String?            @map("image_url")
-  status      ProductStatus      @default(active)
-  createdAt   DateTime           @default(now()) @map("created_at")
-  updatedAt   DateTime           @updatedAt @map("updated_at")
+  id           String             @id
+  businessId   String             @map("business_id")
+  categoryId   String             @map("category_id")
+  name         String
+  description  String?
+  saleMode     ProductSaleMode    @default(unit) @map("sale_mode")
+  weightUnit   ProductWeightUnit? @map("weight_unit")
+  imageUrl     String?            @map("image_url")
+  // Optional per product (SPECS.md 7.3 "Minimum stock" -- listed beside
+  // barcode/SKU/image as an optional field a given product may or may not
+  // have set, not a business-wide feature flag). Same native inventory
+  // unit as ProductStock.quantityOnHand/InventoryMovement.quantity: whole
+  // units for saleMode "unit", integer grams for "weighted" (D-008).
+  // Null means this product has no configured threshold and never
+  // appears in the low-stock alert list (ROADMAP.md "add low-stock/
+  // minimum-stock projections").
+  minimumStock Int?               @map("minimum_stock")
+  status       ProductStatus      @default(active)
+  createdAt    DateTime           @default(now()) @map("created_at")
+  updatedAt    DateTime           @updatedAt @map("updated_at")
 
   business           Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
   // Composite FK: prevents assigning a category that belongs to a

@@ -163,6 +163,29 @@ describe("Product catalog: categories, products, and identifiers", () => {
     expect(product.pricing).toBeNull();
   });
 
+  it("sets and updates minimumStock (SPECS.md 7.3), leaving it null when never configured", async () => {
+    const { owner, business } = await createOwner("prod-owner1c@kiosk.test");
+    const category = await createCategory(owner.id, business.id);
+
+    const withoutThreshold = await products.create(owner.id, business.id, {
+      name: "Chocolate bar",
+      categoryId: category.id,
+    });
+    expect(withoutThreshold.minimumStock).toBeNull();
+
+    const withThreshold = await products.create(owner.id, business.id, {
+      name: "Bottled water",
+      categoryId: category.id,
+      minimumStock: 10,
+    });
+    expect(withThreshold.minimumStock).toBe(10);
+
+    const updated = await products.update(owner.id, business.id, withThreshold.id, {
+      minimumStock: 25,
+    });
+    expect(updated.minimumStock).toBe(25);
+  });
+
   it("includes pricing in product reads/search once it has been set (the web POS cache's price source)", async () => {
     const { owner, business } = await createOwner("prod-owner1b@kiosk.test");
     const category = await createCategory(owner.id, business.id);
