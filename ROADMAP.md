@@ -237,7 +237,7 @@ for a sale; no financial sale is settled yet.
 - Add receiving/purchase, manual adjustment, and dedicated loss commands;
   configure loss reasons including theft, damage, expiration, and other. Each
   produces inventory and audit facts in one database transaction.
-  - Commit: `feat: add stock adjustments and losses`
+  - Commit: `feat: add stock adjustments and losses` -- done (e310543)
 - Allow negative stock by design and surface it as an operational warning, never
   as an implicit sale failure. Add low-stock/minimum-stock projections.
   - Commit: `feat: support negative stock and alerts`
