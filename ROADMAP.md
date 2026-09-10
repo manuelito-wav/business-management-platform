@@ -221,7 +221,8 @@ for a sale; no financial sale is settled yet.
   - Commit: `feat: add local POS reference cache` -- done (5cac162)
 - Build the responsive application shell/dashboard entry and product management
   screens. Keep the POS workspace visually separate from the general navigation.
-  - Commit: `feat: add operational navigation and catalog screens`
+  - Commit: `feat: add operational navigation and catalog screens` -- done
+    (f89fcf5)
 
 ## Phase 3 -- Inventory ledger before sale settlement
 
