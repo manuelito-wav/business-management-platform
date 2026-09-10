@@ -33,3 +33,9 @@ pnpm-debug.log*
 Thumbs.db
 .vscode/*
 !.vscode/extensions.json
+
+# Claude Code local worktrees for background/spawned sessions (already
+# excluded locally via .git/info/exclude, which is machine-local and not
+# shared -- listed here too so shared tooling like `prettier --check .`
+# skips them on every machine/CI, not just this one).
+.claude/worktrees/
