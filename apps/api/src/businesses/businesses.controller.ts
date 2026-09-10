@@ -64,7 +64,13 @@ export class BusinessesController {
    * BusinessAuthorizationGuard already validated membership against the
    * :businessId path param (fresh on every call, per ARCHITECTURE.md
    * Tenancy: a revoked membership takes effect on the next request), so
-   * this only has to persist the pointer.
+   * this only has to persist the pointer. Also returns the caller's
+   * effective permission codes for this business -- BusinessAuthorizationGuard
+   * already loaded `membership.role.rolePermissions` to authorize this very
+   * call, so surfacing it costs nothing new and exposes nothing a member
+   * could not already discover; the web app's navigation/action gating
+   * (ROADMAP.md "add operational navigation and catalog screens") needs it
+   * and there is otherwise no endpoint for "my own effective permissions".
    */
   @Post(":businessId/select")
   @HttpCode(HttpStatus.OK)
@@ -75,6 +81,10 @@ export class BusinessesController {
     @CurrentMembership() membership: MembershipWithRole,
   ) {
     await this.authService.setActiveBusiness(user.sessionId, businessId);
-    return { businessId, roleId: membership.roleId };
+    return {
+      businessId,
+      roleId: membership.roleId,
+      permissions: membership.role.rolePermissions.map((rp) => rp.permissionCode),
+    };
   }
 }

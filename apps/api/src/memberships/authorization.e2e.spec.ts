@@ -172,4 +172,49 @@ describe("Backend tenant authorization (HTTP)", () => {
       .expect(200);
     expect(me.body.activeBusinessId).toBe(businessId);
   });
+
+  it("returns the caller's effective permission codes for the selected business", async () => {
+    const ownerToken = await registerAndLogin("owner-http5@kiosk.test");
+    const created = await request(app.getHttpServer())
+      .post("/businesses")
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ name: "HTTP Test Kiosk 5" })
+      .expect(201);
+    const businessId = created.body.id as string;
+
+    // The Owner role grants the entire current permission catalog
+    // (permission-catalog.ts) -- assert on the specific codes the web app's
+    // navigation/action gating actually needs rather than the whole list.
+    const ownerSelection = await request(app.getHttpServer())
+      .post(`/businesses/${businessId}/select`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .expect(200);
+    expect(ownerSelection.body.permissions).toEqual(expect.arrayContaining(["catalog.manage"]));
+
+    const employeeToken = await registerAndLogin("employee-http5@kiosk.test");
+    const rolesList = await request(app.getHttpServer())
+      .get(`/businesses/${businessId}/roles`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .expect(200);
+    const employeeRole = (rolesList.body as { id: string; name: string }[]).find(
+      (role) => role.name === "Employee",
+    );
+    if (!employeeRole) {
+      throw new Error("Employee role was not seeded");
+    }
+    await request(app.getHttpServer())
+      .post(`/businesses/${businessId}/memberships`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ email: "employee-http5@kiosk.test", roleId: employeeRole.id })
+      .expect(201);
+
+    // Employee has no catalog.manage (permission-catalog.ts) -- the
+    // permissions array reflects the *caller's* role, not the Owner's.
+    const employeeSelection = await request(app.getHttpServer())
+      .post(`/businesses/${businessId}/select`)
+      .set("Authorization", `Bearer ${employeeToken}`)
+      .expect(200);
+    expect(employeeSelection.body.permissions).not.toContain("catalog.manage");
+    expect(employeeSelection.body.permissions).toContain("sales.create");
+  });
 });

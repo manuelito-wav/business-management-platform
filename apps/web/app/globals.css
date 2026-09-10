@@ -1,8 +1,18 @@
-* {
-  box-sizing: border-box;
+@import "tailwindcss";
+
+/*
+ * SPECS.md 6.1's visual direction (white background, black text, compact,
+ * no unnecessary decoration) is written for the POS workspace specifically,
+ * but nothing in SPECS.md prescribes a different look for the general
+ * admin/navigation shell -- so the same restrained direction is used here
+ * too, rather than inventing an unrelated "admin theme".
+ */
+@theme {
+  --color-accent: #111827;
+  --color-accent-foreground: #ffffff;
 }
 
 body {
-  margin: 0;
-  font-family: system-ui, sans-serif;
+  background-color: #ffffff;
+  color: #111827;
 }
