@@ -233,7 +233,7 @@ for a sale; no financial sale is settled yet.
   quantity, optional source operation, actor, and business scope. Maintain a
   transactional current-stock projection for fast reads; reconcile it from the
   ledger in tests/admin tooling.
-  - Commit: `feat: add inventory movement ledger`
+  - Commit: `feat: add inventory movement ledger` -- done (e9d10c3)
 - Add receiving/purchase, manual adjustment, and dedicated loss commands;
   configure loss reasons including theft, damage, expiration, and other. Each
   produces inventory and audit facts in one database transaction.
