@@ -14,10 +14,21 @@
  * injection depends on TypeScript's `emitDecoratorMetadata`, which the
  * lightweight `tsx` runner (esbuild-based) does not implement, unlike the
  * `tsc` build NestJS itself uses.
+ *
+ * NOT type-checked: apps/api/tsconfig.json's `include` is `src/**\/*.ts`,
+ * and this file lives outside `src/`, so `pnpm run typecheck` never sees
+ * it. Each `new XyzService(...)` call below must be manually re-verified
+ * against that service's real constructor after any refactor -- a
+ * constructor gaining/reordering a dependency here fails only at runtime
+ * (see the `audit` param each of MembershipsService/RolesService/
+ * BusinessesService gained when audit logging was added), and can silently
+ * corrupt the idempotency check by leaving an orphan user row with no
+ * business if it throws after `users.create()` succeeds.
  */
 import "reflect-metadata";
 import "dotenv/config";
 import { Uuidv7Generator } from "@bmp/domain";
+import { AuditService } from "../src/audit/audit.service";
 import { BusinessesService } from "../src/businesses/businesses.service";
 import { PasswordHasherService } from "../src/identity/password-hasher.service";
 import { UsersService } from "../src/identity/users.service";
@@ -41,11 +52,17 @@ async function main(): Promise<void> {
   try {
     const ids = new Uuidv7Generator();
     const passwordHasher = new PasswordHasherService();
+    const audit = new AuditService(prisma, ids);
     const users = new UsersService(prisma, passwordHasher, ids);
     const permissions = new PermissionsService(prisma);
-    const roles = new RolesService(prisma, new MembershipsService(prisma, users, ids), ids);
-    const memberships = new MembershipsService(prisma, users, ids);
-    const businesses = new BusinessesService(prisma, permissions, roles, memberships, ids);
+    const roles = new RolesService(
+      prisma,
+      new MembershipsService(prisma, users, audit, ids),
+      audit,
+      ids,
+    );
+    const memberships = new MembershipsService(prisma, users, audit, ids);
+    const businesses = new BusinessesService(prisma, permissions, roles, memberships, audit, ids);
 
     const existingOwner = await users.findByEmail(DEV_OWNER_EMAIL);
     if (existingOwner) {
