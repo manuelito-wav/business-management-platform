@@ -249,7 +249,7 @@ for a sale; no financial sale is settled yet.
   later actions may leave stock available, record a loss, return it to a
   supplier, or follow another configured business action. Keep this isolated
   from the non-expiration inventory path.
-  - Commit: `feat: add optional expiration tracking`
+  - Commit: `feat: add optional expiration tracking` -- done (4572fbb)
 - Verify stock projection repair/rebuild and tenant isolation with integration
   tests before any sale can create movements, including that expiration alerts
   alone never create a movement or change stock.
