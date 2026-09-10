@@ -108,6 +108,8 @@ model Business {
   priceListEntries   PriceListEntry[]
   registers          Register[]
   registerSessions   RegisterSession[]
+  inventoryMovements InventoryMovement[]
+  productStocks      ProductStock[]
 
   @@map("businesses")
 }
@@ -319,14 +321,16 @@ model Product {
   createdAt   DateTime           @default(now()) @map("created_at")
   updatedAt   DateTime           @updatedAt @map("updated_at")
 
-  business         Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  business           Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
   // Composite FK: prevents assigning a category that belongs to a
   // different business (cross-tenant leakage), same pattern as
   // Membership.role.
-  category         Category            @relation(fields: [categoryId, businessId], references: [id, businessId])
-  identifiers      ProductIdentifier[]
-  pricing          ProductPricing?
-  priceListEntries PriceListEntry[]
+  category           Category            @relation(fields: [categoryId, businessId], references: [id, businessId])
+  identifiers        ProductIdentifier[]
+  pricing            ProductPricing?
+  priceListEntries   PriceListEntry[]
+  inventoryMovements InventoryMovement[]
+  stock              ProductStock?
 
   @@unique([id, businessId])
   @@index([businessId, name])
@@ -554,4 +558,85 @@ model RegisterSession {
   @@index([registerId])
   @@index([userId])
   @@map("register_sessions")
+}
+
+enum InventoryMovementReason {
+  sale
+  receiving
+  manual_adjustment
+  loss
+  return
+}
+
+// Append-only source of truth for stock changes (D-015; ARCHITECTURE.md
+// "Inventory": "immutable movement ledger plus current-stock projection").
+// Movements are never updated or deleted -- a correction is a new,
+// opposite-signed movement, the same append-only discipline as
+// AuditEvent. `quantity` is a signed delta in the product's own
+// inventory unit: whole units for saleMode "unit", integer grams for
+// saleMode "weighted" (D-008 -- grams are the one authoritative
+// weighted-quantity precision throughout the system, not just at sale
+// time). Positive increases stock (e.g. receiving), negative decreases
+// it (e.g. sale, loss). `reason` covers SPECS.md 8.1's movement types;
+// "loss" gets a further configurable sub-reason (theft/damage/
+// expiration/other, SPECS.md 8.3) in ROADMAP.md's next checkpoint ("add
+// stock adjustments and losses"), which also adds the first commands
+// that create receiving/manual_adjustment/loss movements -- this
+// checkpoint only establishes the ledger itself.
+// `sourceOperationId` is a plain, opaque reference to whatever operation
+// produced the movement (a future sale/receiving/adjustment id) -- never
+// a foreign key, since inventory does not read another module's tables
+// (ARCHITECTURE.md "Modules"). `actorUserId`/`correlationId` are
+// likewise plain references, matching AuditEvent's established pattern
+// (D-043: immutable operational-fact tables carry an actor reference and
+// correlation/operation IDs) -- a movement must outlive the user who
+// caused it. No register/session reference is added yet: none of this
+// phase's movements (this ledger foundation; receiving/adjustment/loss
+// next) are register-scoped -- D-043's "where the fact is register-
+// scoped" carve-out. That field is deferred to Phase 4's sale-settlement
+// checkpoint, the first one that actually needs it.
+model InventoryMovement {
+  id                String                  @id
+  businessId        String                  @map("business_id")
+  productId         String                  @map("product_id")
+  reason            InventoryMovementReason
+  quantity          Int
+  sourceOperationId String?                 @map("source_operation_id")
+  actorUserId       String                  @map("actor_user_id")
+  correlationId     String                  @map("correlation_id")
+  occurredAt        DateTime                @default(now()) @map("occurred_at")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  // Composite FK: prevents a movement from pointing at a product
+  // belonging to a different business, same pattern as ProductPricing.
+  product  Product  @relation(fields: [productId, businessId], references: [id, businessId], onDelete: Cascade)
+
+  @@index([businessId])
+  @@index([productId])
+  @@map("inventory_movements")
+}
+
+// The "current-stock projection" ROADMAP.md asks for: a fast, repairable
+// read model kept in sync with InventoryMovement inside the very same
+// transaction as every write (InventoryService.recordMovement), never
+// written independently of it. `quantityOnHand` can always be recomputed
+// exactly by summing InventoryMovement.quantity for the product
+// (InventoryService.reconcileStock) -- the ledger, not this table, is
+// the source of truth; this table only exists so a read does not have to
+// aggregate the whole ledger every time (ROADMAP.md "for fast reads").
+model ProductStock {
+  id             String   @id
+  businessId     String   @map("business_id")
+  productId      String   @map("product_id")
+  quantityOnHand Int      @default(0) @map("quantity_on_hand")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  // Composite FK, same pattern as ProductPricing: at most one stock row
+  // per product, and it cannot point at a product in a different business.
+  product  Product  @relation(fields: [productId, businessId], references: [id, businessId], onDelete: Cascade)
+
+  @@unique([productId, businessId])
+  @@index([businessId])
+  @@map("product_stock")
 }

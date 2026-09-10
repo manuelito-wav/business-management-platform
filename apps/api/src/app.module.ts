@@ -7,6 +7,7 @@ import { CorrelationIdMiddleware } from "./common/middleware/correlation-id.midd
 import { ConfigurationModule } from "./configuration/configuration.module";
 import { HealthModule } from "./health/health.module";
 import { IdentityModule } from "./identity/identity.module";
+import { InventoryModule } from "./inventory/inventory.module";
 import { MembershipsModule } from "./memberships/memberships.module";
 import { PricingModule } from "./pricing/pricing.module";
 import { PrismaModule } from "./prisma/prisma.module";
@@ -25,6 +26,7 @@ import { RegistersModule } from "./registers/registers.module";
     CatalogModule,
     PricingModule,
     RegistersModule,
+    InventoryModule,
   ],
 })
 export class AppModule implements NestModule {
