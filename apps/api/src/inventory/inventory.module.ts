@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { AuditModule } from "../audit/audit.module";
 import { CatalogModule } from "../catalog/catalog.module";
 import { domainProviders } from "../common/domain-providers";
 import { IdentityModule } from "../identity/identity.module";
@@ -7,7 +8,7 @@ import { InventoryController } from "./inventory.controller";
 import { InventoryService } from "./inventory.service";
 
 @Module({
-  imports: [IdentityModule, MembershipsModule, CatalogModule],
+  imports: [IdentityModule, MembershipsModule, CatalogModule, AuditModule],
   controllers: [InventoryController],
   providers: [...domainProviders, InventoryService],
   // Exported for future modules (stock adjustments/losses next, sale

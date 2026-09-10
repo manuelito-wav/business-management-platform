@@ -568,6 +568,19 @@ enum InventoryMovementReason {
   return
 }
 
+// SPECS.md 8.3's configurable loss sub-reasons. A fixed enum, not a
+// per-business configurable list (BusinessConfiguration's registry
+// pattern): SPECS.md's own list ("configurable options such as...") reads
+// as this exact set being the intended options, not an invitation for
+// each business to define its own taxonomy, and nothing in DECISIONS.md
+// asks for per-business customization here.
+enum InventoryLossReason {
+  theft
+  damage
+  expiration
+  other
+}
+
 // Append-only source of truth for stock changes (D-015; ARCHITECTURE.md
 // "Inventory": "immutable movement ledger plus current-stock projection").
 // Movements are never updated or deleted -- a correction is a new,
@@ -578,11 +591,9 @@ enum InventoryMovementReason {
 // weighted-quantity precision throughout the system, not just at sale
 // time). Positive increases stock (e.g. receiving), negative decreases
 // it (e.g. sale, loss). `reason` covers SPECS.md 8.1's movement types;
-// "loss" gets a further configurable sub-reason (theft/damage/
-// expiration/other, SPECS.md 8.3) in ROADMAP.md's next checkpoint ("add
-// stock adjustments and losses"), which also adds the first commands
-// that create receiving/manual_adjustment/loss movements -- this
-// checkpoint only establishes the ledger itself.
+// `lossReason` (SPECS.md 8.3) is required exactly when `reason` is
+// "loss" and forbidden otherwise -- enforced in InventoryService, the
+// same pattern as Product.weightUnit's saleMode-conditional requirement.
 // `sourceOperationId` is a plain, opaque reference to whatever operation
 // produced the movement (a future sale/receiving/adjustment id) -- never
 // a foreign key, since inventory does not read another module's tables
@@ -601,6 +612,7 @@ model InventoryMovement {
   productId         String                  @map("product_id")
   reason            InventoryMovementReason
   quantity          Int
+  lossReason        InventoryLossReason?    @map("loss_reason")
   sourceOperationId String?                 @map("source_operation_id")
   actorUserId       String                  @map("actor_user_id")
   correlationId     String                  @map("correlation_id")

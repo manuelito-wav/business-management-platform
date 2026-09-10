@@ -21,6 +21,8 @@ describe("Inventory ledger and stock projection", () => {
   let prisma: PrismaService;
   let users: UsersService;
   let businesses: BusinessesService;
+  let memberships: MembershipsService;
+  let roles: RolesService;
   let categories: CategoriesService;
   let products: ProductsService;
   let inventory: InventoryService;
@@ -46,6 +48,8 @@ describe("Inventory ledger and stock projection", () => {
     prisma = moduleRef.get(PrismaService);
     users = moduleRef.get(UsersService);
     businesses = moduleRef.get(BusinessesService);
+    memberships = moduleRef.get(MembershipsService);
+    roles = moduleRef.get(RolesService);
     categories = moduleRef.get(CategoriesService);
     products = moduleRef.get(ProductsService);
     inventory = moduleRef.get(InventoryService);
@@ -201,14 +205,14 @@ describe("Inventory ledger and stock projection", () => {
     const { owner, business, product } = await createOwnerWithProduct("inv-owner7");
 
     await recordMovement(business.id, product.id, owner.id, 12, {
-      reason: "loss",
-      sourceOperationId: "future-loss-record-id",
+      reason: "return",
+      sourceOperationId: "future-return-record-id",
     });
 
     const [movement] = await prisma.inventoryMovement.findMany({
       where: { productId: product.id },
     });
-    expect(movement?.sourceOperationId).toBe("future-loss-record-id");
+    expect(movement?.sourceOperationId).toBe("future-return-record-id");
   });
 
   // -- getStock -------------------------------------------------------------
@@ -278,5 +282,263 @@ describe("Inventory ledger and stock projection", () => {
     await expect(inventory.reconcileStock(businessA.id, productB.id)).rejects.toMatchObject({
       code: "PRODUCT_NOT_FOUND",
     });
+  });
+
+  // -- receiveStock / adjustStock / recordLoss commands --------------------
+
+  async function addMemberWithRole(
+    ownerId: string,
+    businessId: string,
+    roleName: string,
+    email: string,
+  ) {
+    const role = await prisma.role.findFirstOrThrow({ where: { businessId, name: roleName } });
+    const member = await users.create({ email, password: "correct-horse-1" });
+    await memberships.addMember(
+      ownerId,
+      businessId,
+      { email, roleId: role.id },
+      TEST_CORRELATION_ID,
+    );
+    return member;
+  }
+
+  it("receiveStock increases stock, audits the operation, and defaults sourceOperationId to null", async () => {
+    const { owner, business, product } = await createOwnerWithProduct("inv-recv1");
+
+    const result = await inventory.receiveStock(
+      owner.id,
+      business.id,
+      product.id,
+      { quantity: 30 },
+      TEST_CORRELATION_ID,
+    );
+
+    expect(result.movement).toMatchObject({ reason: "receiving", quantity: 30 });
+    expect(result.stock.quantityOnHand).toBe(30);
+
+    const auditEvents = await prisma.auditEvent.findMany({
+      where: { targetType: "inventory_movement", targetId: result.movement.id },
+    });
+    expect(auditEvents).toHaveLength(1);
+    expect(auditEvents[0]).toMatchObject({
+      action: "inventory_movement.received",
+      actorUserId: owner.id,
+      correlationId: TEST_CORRELATION_ID,
+    });
+  });
+
+  it("receiveStock rejects a non-positive quantity", async () => {
+    const { owner, business, product } = await createOwnerWithProduct("inv-recv2");
+
+    await expect(
+      inventory.receiveStock(
+        owner.id,
+        business.id,
+        product.id,
+        { quantity: 0 },
+        TEST_CORRELATION_ID,
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_RECEIVING_QUANTITY" });
+    await expect(
+      inventory.receiveStock(
+        owner.id,
+        business.id,
+        product.id,
+        { quantity: -5 },
+        TEST_CORRELATION_ID,
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_RECEIVING_QUANTITY" });
+  });
+
+  it("rejects receiveStock/adjustStock for an Employee (needs inventory.adjust)", async () => {
+    const { owner, business, product } = await createOwnerWithProduct("inv-recv3");
+    const employee = await addMemberWithRole(
+      owner.id,
+      business.id,
+      "Employee",
+      "inv-recv3-employee@kiosk.test",
+    );
+
+    await expect(
+      inventory.receiveStock(
+        employee.id,
+        business.id,
+        product.id,
+        { quantity: 10 },
+        TEST_CORRELATION_ID,
+      ),
+    ).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    await expect(
+      inventory.adjustStock(
+        employee.id,
+        business.id,
+        product.id,
+        { quantity: 10 },
+        TEST_CORRELATION_ID,
+      ),
+    ).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+  });
+
+  it("lets a Manager receive stock (inventory.adjust) without owning the whole business", async () => {
+    const { owner, business, product } = await createOwnerWithProduct("inv-recv4");
+    const manager = await addMemberWithRole(
+      owner.id,
+      business.id,
+      "Manager",
+      "inv-recv4-manager@kiosk.test",
+    );
+
+    const result = await inventory.receiveStock(
+      manager.id,
+      business.id,
+      product.id,
+      { quantity: 15 },
+      TEST_CORRELATION_ID,
+    );
+    expect(result.stock.quantityOnHand).toBe(15);
+  });
+
+  it("adjustStock records a signed correction and audits it", async () => {
+    const { owner, business, product } = await createOwnerWithProduct("inv-adj1");
+    await inventory.receiveStock(
+      owner.id,
+      business.id,
+      product.id,
+      { quantity: 20 },
+      TEST_CORRELATION_ID,
+    );
+
+    const result = await inventory.adjustStock(
+      owner.id,
+      business.id,
+      product.id,
+      { quantity: -3 },
+      TEST_CORRELATION_ID,
+    );
+
+    expect(result.movement).toMatchObject({ reason: "manual_adjustment", quantity: -3 });
+    expect(result.stock.quantityOnHand).toBe(17);
+    const auditEvents = await prisma.auditEvent.findMany({
+      where: { targetType: "inventory_movement", targetId: result.movement.id },
+    });
+    expect(auditEvents[0]).toMatchObject({ action: "inventory_movement.adjusted" });
+  });
+
+  it("adjustStock rejects a zero quantity", async () => {
+    const { owner, business, product } = await createOwnerWithProduct("inv-adj2");
+
+    await expect(
+      inventory.adjustStock(
+        owner.id,
+        business.id,
+        product.id,
+        { quantity: 0 },
+        TEST_CORRELATION_ID,
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_INVENTORY_MOVEMENT_QUANTITY" });
+  });
+
+  it("recordLoss stores a positive input as a negative movement, with the configured loss reason, and audits it", async () => {
+    const { owner, business, product } = await createOwnerWithProduct("inv-loss1");
+    await inventory.receiveStock(
+      owner.id,
+      business.id,
+      product.id,
+      { quantity: 50 },
+      TEST_CORRELATION_ID,
+    );
+
+    const result = await inventory.recordLoss(
+      owner.id,
+      business.id,
+      product.id,
+      { quantity: 4, lossReason: "theft" },
+      TEST_CORRELATION_ID,
+    );
+
+    expect(result.movement).toMatchObject({
+      reason: "loss",
+      quantity: -4,
+      lossReason: "theft",
+    });
+    expect(result.stock.quantityOnHand).toBe(46);
+    const auditEvents = await prisma.auditEvent.findMany({
+      where: { targetType: "inventory_movement", targetId: result.movement.id },
+    });
+    expect(auditEvents[0]).toMatchObject({ action: "inventory_movement.loss_recorded" });
+  });
+
+  it("recordLoss rejects a non-positive quantity", async () => {
+    const { owner, business, product } = await createOwnerWithProduct("inv-loss2");
+
+    await expect(
+      inventory.recordLoss(
+        owner.id,
+        business.id,
+        product.id,
+        { quantity: 0, lossReason: "other" },
+        TEST_CORRELATION_ID,
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_LOSS_QUANTITY" });
+  });
+
+  it("rejects recordLoss for a Manager who lacks inventory.record_loss (distinct from inventory.adjust)", async () => {
+    // Manager has inventory.adjust AND inventory.record_loss by default
+    // (permission-catalog.ts) -- use a custom role that grants only
+    // inventory.adjust to prove the two permissions are checked
+    // independently, not treated as equivalent.
+    const { owner, business, product } = await createOwnerWithProduct("inv-loss3");
+    const customRole = await roles.createCustomRole(
+      owner.id,
+      business.id,
+      { name: "Stock clerk", permissionCodes: ["inventory.adjust"] },
+      TEST_CORRELATION_ID,
+    );
+    const clerk = await users.create({
+      email: "inv-loss3-clerk@kiosk.test",
+      password: "correct-horse-1",
+    });
+    await memberships.addMember(
+      owner.id,
+      business.id,
+      { email: clerk.email, roleId: customRole.id },
+      TEST_CORRELATION_ID,
+    );
+
+    await expect(
+      inventory.recordLoss(
+        clerk.id,
+        business.id,
+        product.id,
+        { quantity: 1, lossReason: "other" },
+        TEST_CORRELATION_ID,
+      ),
+    ).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+
+    // But the same clerk CAN adjust, since they do have inventory.adjust.
+    const adjusted = await inventory.adjustStock(
+      clerk.id,
+      business.id,
+      product.id,
+      { quantity: 5 },
+      TEST_CORRELATION_ID,
+    );
+    expect(adjusted.stock.quantityOnHand).toBe(5);
+  });
+
+  it("rejects a loss movement without a lossReason, and a non-loss movement that carries one", async () => {
+    const { owner, business, product } = await createOwnerWithProduct("inv-loss4");
+
+    await expect(
+      recordMovement(business.id, product.id, owner.id, -1, { reason: "loss" }),
+    ).rejects.toMatchObject({ code: "INVENTORY_LOSS_REASON_REQUIRED" });
+
+    await expect(
+      recordMovement(business.id, product.id, owner.id, 1, {
+        reason: "receiving",
+        lossReason: "other",
+      }),
+    ).rejects.toMatchObject({ code: "INVENTORY_LOSS_REASON_NOT_ALLOWED" });
   });
 });

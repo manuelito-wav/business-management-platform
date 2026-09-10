@@ -1,9 +1,15 @@
 import { HttpStatus, Inject, Injectable } from "@nestjs/common";
 import type { IdGenerator } from "@bmp/domain";
+import { AuditService } from "../audit/audit.service";
 import { ProductsService } from "../catalog/products.service";
 import { AppException } from "../common/app-exception";
 import { ID_GENERATOR } from "../common/domain-providers";
-import type { InventoryMovementReason } from "../generated/prisma/client";
+import type {
+  InventoryLossReason,
+  InventoryMovement,
+  InventoryMovementReason,
+  ProductStock,
+} from "../generated/prisma/client";
 import { Prisma } from "../generated/prisma/client";
 import { MembershipsService } from "../memberships/memberships.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -21,6 +27,13 @@ export interface RecordInventoryMovementInput {
   actorUserId: string;
   correlationId: string;
   sourceOperationId?: string;
+  /** Required exactly when `reason` is "loss", forbidden otherwise (SPECS.md 8.3). */
+  lossReason?: InventoryLossReason;
+}
+
+export interface RecordMovementResult {
+  movement: InventoryMovement;
+  stock: ProductStock;
 }
 
 export interface ProductStockView {
@@ -29,24 +42,42 @@ export interface ProductStockView {
   updatedAt: Date | null;
 }
 
+export interface ReceiveStockInput {
+  /** Positive: how many units/grams were received. */
+  quantity: number;
+  sourceOperationId?: string;
+}
+
+export interface AdjustStockInput {
+  /** Signed, non-zero: the correction to apply. */
+  quantity: number;
+}
+
+export interface RecordLossInput {
+  /** Positive: how many units/grams were lost -- stored as a negative movement. */
+  quantity: number;
+  lossReason: InventoryLossReason;
+}
+
 /**
  * The inventory ledger's foundation (ROADMAP.md "add inventory movement
- * ledger"): a low-level, trusted-caller writer. `recordMovement` does not
- * itself check membership/permission, and -- deliberately -- does not
- * call AuditService.record either: ARCHITECTURE.md's "Financial
- * settlement" section treats "audit" as one fact per coordinated command,
- * alongside (not duplicated per) the sale/payment/inventory/cash facts it
- * produces, and a single future command (e.g. a sale with several line
- * items) may call `recordMovement` more than once. D-042 ("every
- * finalized command that changes tenant-owned state produces an audit
- * record") is therefore the CALLER's responsibility here: every future
- * caller (ROADMAP.md's next checkpoint, "add stock adjustments and
- * losses", and later sale settlement) must validate permission and call
- * AuditService.record itself, inside the same transaction, exactly like
- * PricingService validates `pricing.manage` and calls AuditService.record
- * around its own `persist`. `recordMovement` does still defend the
- * tenant-consistency invariant itself (AUDIT.md Tenancy: "All entities in
- * a composite operation share the same business_id, validated in the same
+ * ledger") plus the first commands built on it (ROADMAP.md "add stock
+ * adjustments and losses"). `recordMovement` is a low-level, trusted-caller
+ * writer: it does not itself check membership/permission, and --
+ * deliberately -- does not call AuditService.record either.
+ * ARCHITECTURE.md's "Financial settlement" section treats "audit" as one
+ * fact per coordinated command, alongside (not duplicated per) the sale/
+ * payment/inventory/cash facts it produces, and a single future command
+ * (e.g. a sale with several line items) may call `recordMovement` more
+ * than once. D-042 ("every finalized command that changes tenant-owned
+ * state produces an audit record") is therefore each *command* method's
+ * responsibility (receiveStock/adjustStock/recordLoss below, and later
+ * sale settlement): validate permission, then call AuditService.record
+ * itself, inside the same transaction -- exactly like PricingService
+ * validates `pricing.manage` and calls AuditService.record around its own
+ * `persist`. `recordMovement` does still defend the tenant-consistency
+ * invariant itself (AUDIT.md Tenancy: "All entities in a composite
+ * operation share the same business_id, validated in the same
  * transaction") by re-checking the product's business inside the same tx
  * -- that part is safe to centralize because it never varies by caller.
  */
@@ -56,6 +87,7 @@ export class InventoryService {
     private readonly prisma: PrismaService,
     private readonly memberships: MembershipsService,
     private readonly products: ProductsService,
+    private readonly audit: AuditService,
     @Inject(ID_GENERATOR) private readonly ids: IdGenerator,
   ) {}
 
@@ -69,7 +101,7 @@ export class InventoryService {
   async recordMovement(
     tx: Prisma.TransactionClient,
     input: RecordInventoryMovementInput,
-  ): Promise<{ id: string }> {
+  ): Promise<RecordMovementResult> {
     if (!Number.isInteger(input.quantity) || input.quantity === 0) {
       throw new AppException(
         "INVALID_INVENTORY_MOVEMENT_QUANTITY",
@@ -77,6 +109,7 @@ export class InventoryService {
         HttpStatus.BAD_REQUEST,
       );
     }
+    this.validateLossReason(input.reason, input.lossReason);
 
     // Not ProductsService.requireInBusiness: that method reads through
     // `this.prisma`, not the caller's `tx` -- this check must run inside
@@ -97,13 +130,14 @@ export class InventoryService {
         productId: input.productId,
         reason: input.reason,
         quantity: input.quantity,
+        lossReason: input.lossReason,
         sourceOperationId: input.sourceOperationId,
         actorUserId: input.actorUserId,
         correlationId: input.correlationId,
       },
     });
 
-    await tx.productStock.upsert({
+    const stock = await tx.productStock.upsert({
       where: {
         productId_businessId: { productId: input.productId, businessId: input.businessId },
       },
@@ -116,7 +150,140 @@ export class InventoryService {
       update: { quantityOnHand: { increment: input.quantity } },
     });
 
-    return { id: movement.id };
+    return { movement, stock };
+  }
+
+  /**
+   * Receiving/purchase (SPECS.md 8.1): always increases stock. Gated by
+   * `inventory.adjust` -- the same permission as adjustStock, matching the
+   * single generic code permission-catalog.ts already seeded for this
+   * checkpoint (there is no separate "receive" permission).
+   */
+  async receiveStock(
+    actingUserId: string,
+    businessId: string,
+    productId: string,
+    input: ReceiveStockInput,
+    correlationId: string,
+  ): Promise<RecordMovementResult> {
+    await this.memberships.requirePermission(actingUserId, businessId, "inventory.adjust");
+    if (!Number.isInteger(input.quantity) || input.quantity <= 0) {
+      throw new AppException(
+        "INVALID_RECEIVING_QUANTITY",
+        "quantity must be a positive integer.",
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const result = await this.recordMovement(tx, {
+        businessId,
+        productId,
+        actorUserId: actingUserId,
+        correlationId,
+        reason: "receiving",
+        quantity: input.quantity,
+        sourceOperationId: input.sourceOperationId,
+      });
+      await this.audit.record(tx, {
+        businessId,
+        actorUserId: actingUserId,
+        action: "inventory_movement.received",
+        targetType: "inventory_movement",
+        targetId: result.movement.id,
+        after: {
+          productId,
+          quantity: result.movement.quantity,
+          sourceOperationId: result.movement.sourceOperationId,
+        },
+        correlationId,
+      });
+      return result;
+    });
+  }
+
+  /**
+   * Manual adjustment (SPECS.md 8.1): a signed correction, positive or
+   * negative -- e.g. fixing a miscount. Gated by `inventory.adjust`.
+   */
+  async adjustStock(
+    actingUserId: string,
+    businessId: string,
+    productId: string,
+    input: AdjustStockInput,
+    correlationId: string,
+  ): Promise<RecordMovementResult> {
+    await this.memberships.requirePermission(actingUserId, businessId, "inventory.adjust");
+
+    return this.prisma.$transaction(async (tx) => {
+      const result = await this.recordMovement(tx, {
+        businessId,
+        productId,
+        actorUserId: actingUserId,
+        correlationId,
+        reason: "manual_adjustment",
+        quantity: input.quantity,
+      });
+      await this.audit.record(tx, {
+        businessId,
+        actorUserId: actingUserId,
+        action: "inventory_movement.adjusted",
+        targetType: "inventory_movement",
+        targetId: result.movement.id,
+        after: { productId, quantity: result.movement.quantity },
+        correlationId,
+      });
+      return result;
+    });
+  }
+
+  /**
+   * Dedicated stock loss (SPECS.md 8.3): the caller reports a positive
+   * "amount lost", stored as a negative movement -- loss always decreases
+   * stock, never increases it. Gated by `inventory.record_loss`, distinct
+   * from `inventory.adjust` (SPECS.md's dedicated loss area).
+   */
+  async recordLoss(
+    actingUserId: string,
+    businessId: string,
+    productId: string,
+    input: RecordLossInput,
+    correlationId: string,
+  ): Promise<RecordMovementResult> {
+    await this.memberships.requirePermission(actingUserId, businessId, "inventory.record_loss");
+    if (!Number.isInteger(input.quantity) || input.quantity <= 0) {
+      throw new AppException(
+        "INVALID_LOSS_QUANTITY",
+        "quantity must be a positive integer (the amount lost).",
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const result = await this.recordMovement(tx, {
+        businessId,
+        productId,
+        actorUserId: actingUserId,
+        correlationId,
+        reason: "loss",
+        quantity: -input.quantity,
+        lossReason: input.lossReason,
+      });
+      await this.audit.record(tx, {
+        businessId,
+        actorUserId: actingUserId,
+        action: "inventory_movement.loss_recorded",
+        targetType: "inventory_movement",
+        targetId: result.movement.id,
+        after: {
+          productId,
+          quantity: result.movement.quantity,
+          lossReason: result.movement.lossReason,
+        },
+        correlationId,
+      });
+      return result;
+    });
   }
 
   async getStock(
@@ -167,5 +334,30 @@ export class InventoryService {
 
       return { productId, quantityOnHand: stock.quantityOnHand, updatedAt: stock.updatedAt };
     });
+  }
+
+  /**
+   * D-008-style conditional requirement (mirrors
+   * ProductsService.resolveWeightUnit exactly): a loss movement must
+   * carry a lossReason, and no other movement reason may.
+   */
+  private validateLossReason(
+    reason: InventoryMovementReason,
+    lossReason: InventoryLossReason | undefined,
+  ): void {
+    if (reason === "loss" && !lossReason) {
+      throw new AppException(
+        "INVENTORY_LOSS_REASON_REQUIRED",
+        'A "loss" movement requires a lossReason.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    if (reason !== "loss" && lossReason) {
+      throw new AppException(
+        "INVENTORY_LOSS_REASON_NOT_ALLOWED",
+        'lossReason is only allowed for "loss" movements.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
   }
 }

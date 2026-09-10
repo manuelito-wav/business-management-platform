@@ -136,4 +136,121 @@ describe("Inventory stock (HTTP)", () => {
       .expect(404);
     expect(notFound.body.error.code).toBe("PRODUCT_NOT_FOUND");
   });
+
+  // -- receive / adjust / loss commands --------------------------------------
+
+  it("receives, adjusts, and records a loss over HTTP, each reflected in the stock read", async () => {
+    const ownerToken = await registerAndLogin("inv-http-owner5@kiosk.test");
+    const { businessId, productId } = await setUpBusinessWithProduct(
+      ownerToken,
+      "Inventory HTTP Kiosk 5",
+    );
+
+    const received = await request(app.getHttpServer())
+      .post(`/businesses/${businessId}/products/${productId}/stock/receive`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ quantity: 100 })
+      .expect(201);
+    expect(received.body.movement).toMatchObject({ reason: "receiving", quantity: 100 });
+    expect(received.body.stock.quantityOnHand).toBe(100);
+
+    const adjusted = await request(app.getHttpServer())
+      .post(`/businesses/${businessId}/products/${productId}/stock/adjust`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ quantity: -10 })
+      .expect(201);
+    expect(adjusted.body.stock.quantityOnHand).toBe(90);
+
+    const lost = await request(app.getHttpServer())
+      .post(`/businesses/${businessId}/products/${productId}/stock/loss`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ quantity: 5, lossReason: "damage" })
+      .expect(201);
+    expect(lost.body.movement).toMatchObject({
+      reason: "loss",
+      quantity: -5,
+      lossReason: "damage",
+    });
+    expect(lost.body.stock.quantityOnHand).toBe(85);
+
+    const stock = await request(app.getHttpServer())
+      .get(`/businesses/${businessId}/products/${productId}/stock`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .expect(200);
+    expect(stock.body.quantityOnHand).toBe(85);
+  });
+
+  it("rejects an Employee's receive/adjust/loss requests, needing inventory.adjust/inventory.record_loss", async () => {
+    const ownerToken = await registerAndLogin("inv-http-owner6@kiosk.test");
+    const { businessId, productId } = await setUpBusinessWithProduct(
+      ownerToken,
+      "Inventory HTTP Kiosk 6",
+    );
+    const roles = await request(app.getHttpServer())
+      .get(`/businesses/${businessId}/roles`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .expect(200);
+    const employeeRole = (roles.body as { id: string; name: string }[]).find(
+      (role) => role.name === "Employee",
+    );
+    if (!employeeRole) {
+      throw new Error("Employee role was not seeded");
+    }
+    const employeeToken = await registerAndLogin("inv-http-employee6@kiosk.test");
+    await request(app.getHttpServer())
+      .post(`/businesses/${businessId}/memberships`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ email: "inv-http-employee6@kiosk.test", roleId: employeeRole.id })
+      .expect(201);
+
+    const receiveDenied = await request(app.getHttpServer())
+      .post(`/businesses/${businessId}/products/${productId}/stock/receive`)
+      .set("Authorization", `Bearer ${employeeToken}`)
+      .send({ quantity: 10 })
+      .expect(403);
+    expect(receiveDenied.body.error.code).toBe("PERMISSION_DENIED");
+
+    const adjustDenied = await request(app.getHttpServer())
+      .post(`/businesses/${businessId}/products/${productId}/stock/adjust`)
+      .set("Authorization", `Bearer ${employeeToken}`)
+      .send({ quantity: 10 })
+      .expect(403);
+    expect(adjustDenied.body.error.code).toBe("PERMISSION_DENIED");
+
+    const lossDenied = await request(app.getHttpServer())
+      .post(`/businesses/${businessId}/products/${productId}/stock/loss`)
+      .set("Authorization", `Bearer ${employeeToken}`)
+      .send({ quantity: 1, lossReason: "other" })
+      .expect(403);
+    expect(lossDenied.body.error.code).toBe("PERMISSION_DENIED");
+  });
+
+  it("rejects a non-positive receive quantity with a 400", async () => {
+    const ownerToken = await registerAndLogin("inv-http-owner7@kiosk.test");
+    const { businessId, productId } = await setUpBusinessWithProduct(
+      ownerToken,
+      "Inventory HTTP Kiosk 7",
+    );
+
+    const denied = await request(app.getHttpServer())
+      .post(`/businesses/${businessId}/products/${productId}/stock/receive`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ quantity: 0 })
+      .expect(400);
+    expect(denied.body.error.correlationId).toBeDefined();
+  });
+
+  it("rejects a loss request missing lossReason with a validation error", async () => {
+    const ownerToken = await registerAndLogin("inv-http-owner8@kiosk.test");
+    const { businessId, productId } = await setUpBusinessWithProduct(
+      ownerToken,
+      "Inventory HTTP Kiosk 8",
+    );
+
+    await request(app.getHttpServer())
+      .post(`/businesses/${businessId}/products/${productId}/stock/loss`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ quantity: 1 })
+      .expect(400);
+  });
 });
