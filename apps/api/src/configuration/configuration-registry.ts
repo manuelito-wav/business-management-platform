@@ -1,16 +1,22 @@
 import { plainToInstance } from "class-transformer";
 import { validateSync } from "class-validator";
+import {
+  EXPIRATION_POLICY_DEFAULT,
+  ExpirationPolicyConfig,
+} from "./sections/expiration-policy.config";
 import { FEATURE_FLAGS_DEFAULT, FeatureFlagsConfig } from "./sections/feature-flags.config";
 import { PAYMENT_METHODS_DEFAULT, PaymentMethodsConfig } from "./sections/payment-methods.config";
 import { POLICIES_DEFAULT, PoliciesConfig } from "./sections/policies.config";
 import { REGISTER_POLICY_DEFAULT, RegisterPolicyConfig } from "./sections/register-policy.config";
 
-export type ConfigurationKey = "paymentMethods" | "featureFlags" | "policies" | "registerPolicy";
+export type ConfigurationKey =
+  "paymentMethods" | "featureFlags" | "policies" | "registerPolicy" | "expirationPolicy";
 export const CONFIGURATION_KEYS: readonly ConfigurationKey[] = [
   "paymentMethods",
   "featureFlags",
   "policies",
   "registerPolicy",
+  "expirationPolicy",
 ];
 
 export interface ConfigurationSectionDefinition<T extends object> {
@@ -69,6 +75,7 @@ export const CONFIGURATION_REGISTRY = {
   featureFlags: definePlainSection(FeatureFlagsConfig, FEATURE_FLAGS_DEFAULT),
   policies: definePlainSection(PoliciesConfig, POLICIES_DEFAULT),
   registerPolicy: definePlainSection(RegisterPolicyConfig, REGISTER_POLICY_DEFAULT),
+  expirationPolicy: definePlainSection(ExpirationPolicyConfig, EXPIRATION_POLICY_DEFAULT),
 } satisfies Record<ConfigurationKey, ConfigurationSectionDefinition<object>>;
 
 export type ConfigurationSections = {

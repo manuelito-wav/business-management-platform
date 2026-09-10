@@ -2,6 +2,7 @@ import { Type } from "class-transformer";
 import {
   ArrayMaxSize,
   IsArray,
+  IsBoolean,
   IsIn,
   IsInt,
   IsOptional,
@@ -44,6 +45,11 @@ export class CreateProductDto {
   @IsInt()
   @Min(0)
   minimumStock?: number;
+
+  /** Per-product opt-in (SPECS.md 8.4) -- only meaningful once the business also enables featureFlags.expirationTracking; enforced at ExpirationBatchesService.createBatch, not here. */
+  @IsOptional()
+  @IsBoolean()
+  expirationTrackingEnabled?: boolean;
 
   @IsOptional()
   @IsArray()

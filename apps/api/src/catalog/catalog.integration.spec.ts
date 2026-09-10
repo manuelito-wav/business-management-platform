@@ -186,6 +186,29 @@ describe("Product catalog: categories, products, and identifiers", () => {
     expect(updated.minimumStock).toBe(25);
   });
 
+  it("sets and updates expirationTrackingEnabled (SPECS.md 8.4), defaulting to false", async () => {
+    const { owner, business } = await createOwner("prod-owner1d@kiosk.test");
+    const category = await createCategory(owner.id, business.id);
+
+    const untracked = await products.create(owner.id, business.id, {
+      name: "Canned beans",
+      categoryId: category.id,
+    });
+    expect(untracked.expirationTrackingEnabled).toBe(false);
+
+    const tracked = await products.create(owner.id, business.id, {
+      name: "Milk",
+      categoryId: category.id,
+      expirationTrackingEnabled: true,
+    });
+    expect(tracked.expirationTrackingEnabled).toBe(true);
+
+    const updated = await products.update(owner.id, business.id, tracked.id, {
+      expirationTrackingEnabled: false,
+    });
+    expect(updated.expirationTrackingEnabled).toBe(false);
+  });
+
   it("includes pricing in product reads/search once it has been set (the web POS cache's price source)", async () => {
     const { owner, business } = await createOwner("prod-owner1b@kiosk.test");
     const category = await createCategory(owner.id, business.id);

@@ -1,4 +1,13 @@
-import { IsIn, IsInt, IsOptional, IsString, IsUrl, Min, MinLength } from "class-validator";
+import {
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUrl,
+  Min,
+  MinLength,
+} from "class-validator";
 
 export class UpdateProductDto {
   @IsOptional()
@@ -33,6 +42,11 @@ export class UpdateProductDto {
   @IsInt()
   @Min(0)
   minimumStock?: number;
+
+  /** Per-product opt-in (SPECS.md 8.4) -- only meaningful once the business also enables featureFlags.expirationTracking; enforced at ExpirationBatchesService.createBatch, not here. */
+  @IsOptional()
+  @IsBoolean()
+  expirationTrackingEnabled?: boolean;
 
   @IsOptional()
   @IsIn(["active", "inactive"])

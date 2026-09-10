@@ -110,6 +110,7 @@ model Business {
   registerSessions   RegisterSession[]
   inventoryMovements InventoryMovement[]
   productStocks      ProductStock[]
+  expirationBatches  ProductExpirationBatch[]
 
   @@map("businesses")
 }
@@ -309,14 +310,14 @@ enum ProductWeightUnit {
 // spanning two columns are avoidable complexity Prisma does not model
 // natively; this project prefers explicit service-level validation).
 model Product {
-  id           String             @id
-  businessId   String             @map("business_id")
-  categoryId   String             @map("category_id")
-  name         String
-  description  String?
-  saleMode     ProductSaleMode    @default(unit) @map("sale_mode")
-  weightUnit   ProductWeightUnit? @map("weight_unit")
-  imageUrl     String?            @map("image_url")
+  id                        String             @id
+  businessId                String             @map("business_id")
+  categoryId                String             @map("category_id")
+  name                      String
+  description               String?
+  saleMode                  ProductSaleMode    @default(unit) @map("sale_mode")
+  weightUnit                ProductWeightUnit? @map("weight_unit")
+  imageUrl                  String?            @map("image_url")
   // Optional per product (SPECS.md 7.3 "Minimum stock" -- listed beside
   // barcode/SKU/image as an optional field a given product may or may not
   // have set, not a business-wide feature flag). Same native inventory
@@ -325,21 +326,30 @@ model Product {
   // Null means this product has no configured threshold and never
   // appears in the low-stock alert list (ROADMAP.md "add low-stock/
   // minimum-stock projections").
-  minimumStock Int?               @map("minimum_stock")
-  status       ProductStatus      @default(active)
-  createdAt    DateTime           @default(now()) @map("created_at")
-  updatedAt    DateTime           @updatedAt @map("updated_at")
+  minimumStock              Int?               @map("minimum_stock")
+  // Per-product opt-in (SPECS.md 8.4 "Not every product requires
+  // expiration tracking"), meaningful only once the business itself has
+  // also enabled featureFlags.expirationTracking (already seeded,
+  // default false, in configuration/sections/feature-flags.config.ts) --
+  // both gates are checked where it actually matters, at
+  // ExpirationBatchesService.createBatch, not here. Settable anytime,
+  // the same unconditional-field pattern as minimumStock.
+  expirationTrackingEnabled Boolean            @default(false) @map("expiration_tracking_enabled")
+  status                    ProductStatus      @default(active)
+  createdAt                 DateTime           @default(now()) @map("created_at")
+  updatedAt                 DateTime           @updatedAt @map("updated_at")
 
-  business           Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  business           Business                 @relation(fields: [businessId], references: [id], onDelete: Cascade)
   // Composite FK: prevents assigning a category that belongs to a
   // different business (cross-tenant leakage), same pattern as
   // Membership.role.
-  category           Category            @relation(fields: [categoryId, businessId], references: [id, businessId])
+  category           Category                 @relation(fields: [categoryId, businessId], references: [id, businessId])
   identifiers        ProductIdentifier[]
   pricing            ProductPricing?
   priceListEntries   PriceListEntry[]
   inventoryMovements InventoryMovement[]
   stock              ProductStock?
+  expirationBatches  ProductExpirationBatch[]
 
   @@unique([id, businessId])
   @@index([businessId, name])
@@ -660,4 +670,47 @@ model ProductStock {
   @@unique([productId, businessId])
   @@index([businessId])
   @@map("product_stock")
+}
+
+// Product/batch expiration data (ROADMAP.md "add optional expiration
+// tracking"; SPECS.md 8.4). Deliberately NOT linked to InventoryMovement
+// or ProductStock -- ROADMAP.md "Keep this isolated from the non-
+// expiration inventory path": a batch is metadata about a known
+// perishable delivery for alerting purposes only, never itself an
+// inventory fact. `quantity` is informational (how many units/grams --
+// D-008 -- were logged in this batch at creation time); it is never
+// decremented as the product sells and is not reconciled against
+// ProductStock.quantityOnHand -- true per-batch/FEFO stock tracking is
+// out of scope here, matching ROADMAP's "informational-only" framing.
+// `expiresAt` is a UTC instant (D-036) representing a calendar date;
+// display converts to the business's own timezone.
+// `resolvedAt` records that an authorized user completed the "alert ->
+// physical verification -> decision" workflow SPECS.md 8.4 describes --
+// set only by ExpirationBatchesService.resolveBatch, never automatically;
+// a resolved batch stops appearing in the alert list regardless of its
+// actual expiresAt. The decision itself (leave stock available, record a
+// loss via the existing recordLoss command with lossReason "expiration",
+// or any other configured action) happens through its own existing
+// command and is not tracked on this row -- only that a human handled it.
+model ProductExpirationBatch {
+  id            String    @id
+  businessId    String    @map("business_id")
+  productId     String    @map("product_id")
+  quantity      Int
+  expiresAt     DateTime  @map("expires_at")
+  actorUserId   String    @map("actor_user_id")
+  correlationId String    @map("correlation_id")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  resolvedAt    DateTime? @map("resolved_at")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  // Composite FK, same pattern as ProductPricing/ProductStock.
+  product  Product  @relation(fields: [productId, businessId], references: [id, businessId], onDelete: Cascade)
+
+  @@index([businessId])
+  @@index([productId])
+  // Speeds the alert query's "unresolved batches expiring soon" filter --
+  // the one query this table exists to serve.
+  @@index([businessId, resolvedAt, expiresAt])
+  @@map("product_expiration_batches")
 }

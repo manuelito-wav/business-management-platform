@@ -49,6 +49,7 @@ export class ProductsService {
             weightUnit,
             imageUrl: dto.imageUrl,
             minimumStock: dto.minimumStock,
+            expirationTrackingEnabled: dto.expirationTrackingEnabled,
           },
         });
 
@@ -112,6 +113,7 @@ export class ProductsService {
         weightUnit,
         imageUrl: dto.imageUrl,
         minimumStock: dto.minimumStock,
+        expirationTrackingEnabled: dto.expirationTrackingEnabled,
         status: dto.status,
       },
       include: { identifiers: true, pricing: true },

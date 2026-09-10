@@ -1,6 +1,7 @@
 import { Type } from "class-transformer";
 import { IsIn, IsOptional, ValidateNested } from "class-validator";
 import { IANA_TIMEZONES } from "../../common/iana-timezones";
+import { ExpirationPolicyConfig } from "../sections/expiration-policy.config";
 import { FeatureFlagsConfig } from "../sections/feature-flags.config";
 import { PaymentMethodsConfig } from "../sections/payment-methods.config";
 import { PoliciesConfig } from "../sections/policies.config";
@@ -31,4 +32,9 @@ export class UpdateConfigurationDto {
   @ValidateNested()
   @Type(() => RegisterPolicyConfig)
   registerPolicy?: RegisterPolicyConfig;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ExpirationPolicyConfig)
+  expirationPolicy?: ExpirationPolicyConfig;
 }
