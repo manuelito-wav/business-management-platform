@@ -1,6 +1,7 @@
 import { HttpStatus, Inject, Injectable } from "@nestjs/common";
 import {
   GRAMS_PER_KILOGRAM,
+  resolvePaymentAllocation,
   roundedIntegerMultiplyDivide,
   type Clock,
   type IdGenerator,
@@ -13,7 +14,10 @@ import { ConfigurationService } from "../configuration/configuration.service";
 import { Prisma, ProductSaleMode, Sale, SaleStatus } from "../generated/prisma/client";
 import { MembershipsService } from "../memberships/memberships.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { AddPaymentDto } from "./dto/add-payment.dto";
 import { SaleLineInputDto } from "./dto/sale-line-input.dto";
+
+type SaleClient = PrismaService | Prisma.TransactionClient;
 
 /**
  * A sale still `in_progress` whose first line was added more than
@@ -51,21 +55,28 @@ function computeLineTotal(
   return unitSalePrice * quantity;
 }
 
+/** Cash and card have no separate manual-verification step yet (SPECS.md 10.3 names only qr/transfer) -- self-verified the instant they are added. */
+function isSelfVerifyingMethod(method: AddPaymentDto["method"]): boolean {
+  return method === "cash" || method === "card";
+}
+
 /**
  * The immutable sale aggregate and its explicit state transitions
- * (ROADMAP.md "add sale aggregate and state transitions") -- see
- * schema.prisma's Sale/SaleLine doc comments for the full status/field
- * reasoning. Not yet wired to the live POS UI: lib/pos/cart.ts's tabs
- * stay entirely client-side through this checkpoint (D-010, and the
- * "add multi-tab POS drafts" checkpoint's own explicit design). `start`/
- * `addLine`/`updateLineQuantity`/`removeLine`/`cancel` are complete,
- * self-contained operations (each opens its own transaction) usable as
- * soon as a caller exists; `complete` is deliberately narrower --
- * composable into an existing transaction client, since ROADMAP.md's
+ * (ROADMAP.md "add sale aggregate and state transitions" / "add split
+ * payment settlement") -- see schema.prisma's Sale/SaleLine/Payment doc
+ * comments for the full status/field reasoning. Not yet wired to the
+ * live POS UI: lib/pos/cart.ts's tabs stay entirely client-side through
+ * this checkpoint (D-010, and the "add multi-tab POS drafts" checkpoint's
+ * own explicit design). `start`/`addLine`/`updateLineQuantity`/
+ * `removeLine`/`cancel`/`addPayment`/`removePayment`/`verifyPayment` are
+ * complete, self-contained operations (each opens its own transaction)
+ * usable as soon as a caller exists; `complete` is deliberately narrower
+ * -- composable into an existing transaction client, since ROADMAP.md's
  * later "settle sales with stock and cash effects" checkpoint needs to
  * call it as one step inside its own single atomic "complete sale"
- * transaction (payment validation and the inventory/cash effects belong
- * to that checkpoint, not here).
+ * transaction (the inventory/cash effects themselves belong to that
+ * checkpoint, not here -- payment *validation* is this checkpoint's own
+ * job and already runs inside `complete` below).
  */
 @Injectable()
 export class SalesService {
@@ -101,7 +112,7 @@ export class SalesService {
           firstItemAt: now,
         },
       });
-      const line = await tx.saleLine.create({
+      await tx.saleLine.create({
         data: {
           id: this.ids.generate(),
           saleId: sale.id,
@@ -125,7 +136,7 @@ export class SalesService {
         after: { productId: product.id, quantity: dto.quantity, total: lineTotal },
         correlationId,
       });
-      return { ...sale, lines: [line] };
+      return this.loadSaleDetail(tx, businessId, sale.id);
     });
   }
 
@@ -181,17 +192,17 @@ export class SalesService {
         });
       }
 
-      const sale = await this.recomputeTotal(tx, businessId, saleId);
+      const total = await this.recomputeTotal(tx, saleId);
       await this.audit.record(tx, {
         businessId,
         actorUserId: actingUserId,
         action: "sale.line_added",
         targetType: "sale",
         targetId: saleId,
-        after: { productId: product.id, quantity: dto.quantity, total: sale.total },
+        after: { productId: product.id, quantity: dto.quantity, total },
         correlationId,
       });
-      return sale;
+      return this.loadSaleDetail(tx, businessId, saleId);
     });
   }
 
@@ -211,7 +222,7 @@ export class SalesService {
       const lineTotal = computeLineTotal(line.saleMode, line.unitSalePrice, quantity);
       await tx.saleLine.update({ where: { id: lineId }, data: { quantity, lineTotal } });
 
-      const sale = await this.recomputeTotal(tx, businessId, saleId);
+      const total = await this.recomputeTotal(tx, saleId);
       await this.audit.record(tx, {
         businessId,
         actorUserId: actingUserId,
@@ -219,10 +230,10 @@ export class SalesService {
         targetType: "sale",
         targetId: saleId,
         before: { lineId, quantity: line.quantity },
-        after: { lineId, quantity, total: sale.total },
+        after: { lineId, quantity, total },
         correlationId,
       });
-      return sale;
+      return this.loadSaleDetail(tx, businessId, saleId);
     });
   }
 
@@ -240,17 +251,150 @@ export class SalesService {
     return this.prisma.$transaction(async (tx) => {
       await tx.saleLine.delete({ where: { id: lineId } });
 
-      const sale = await this.recomputeTotal(tx, businessId, saleId);
+      const total = await this.recomputeTotal(tx, saleId);
       await this.audit.record(tx, {
         businessId,
         actorUserId: actingUserId,
         action: "sale.line_removed",
         targetType: "sale",
         targetId: saleId,
-        after: { lineId, total: sale.total },
+        after: { lineId, total },
         correlationId,
       });
-      return sale;
+      return this.loadSaleDetail(tx, businessId, saleId);
+    });
+  }
+
+  /**
+   * SPECS.md 6.6/10.2's split payments: adds one method's allocation.
+   * Cash may exceed what remains (change is resolved at `complete` time);
+   * every other method is rejected outright if it alone would push the
+   * combined non-cash total past the sale's own total -- see
+   * @bmp/domain's resolvePaymentAllocation for the full rule this
+   * mirrors. Only enabled methods (paymentMethods.enabled, SPECS.md 10.1)
+   * may be used.
+   */
+  async addPayment(
+    actingUserId: string,
+    businessId: string,
+    saleId: string,
+    dto: AddPaymentDto,
+    correlationId: string,
+  ) {
+    await this.memberships.requirePermission(actingUserId, businessId, "sales.create");
+    await this.requireInProgress(businessId, saleId);
+    const { paymentMethods } = await this.configuration.getSections(businessId);
+    if (!paymentMethods.enabled.includes(dto.method)) {
+      throw new AppException(
+        "SALE_PAYMENT_METHOD_DISABLED",
+        "This payment method is not enabled for this business.",
+        HttpStatus.CONFLICT,
+      );
+    }
+    const now = this.clock.now();
+
+    return this.prisma.$transaction(async (tx) => {
+      const sale = await tx.sale.findUniqueOrThrow({ where: { id: saleId } });
+      if (dto.method !== "cash") {
+        const existing = await tx.payment.findMany({ where: { saleId, method: { not: "cash" } } });
+        const nonCashTotal =
+          existing.reduce((sum, payment) => sum + payment.amount, 0) + dto.amount;
+        if (nonCashTotal > sale.total) {
+          throw new AppException(
+            "SALE_PAYMENT_EXCEEDS_TOTAL",
+            "This payment would exceed the sale's total; only cash may exceed it (as change).",
+            HttpStatus.CONFLICT,
+          );
+        }
+      }
+      await tx.payment.create({
+        data: {
+          id: this.ids.generate(),
+          saleId,
+          businessId,
+          method: dto.method,
+          amount: dto.amount,
+          verifiedAt: isSelfVerifyingMethod(dto.method) ? now : null,
+        },
+      });
+      await this.audit.record(tx, {
+        businessId,
+        actorUserId: actingUserId,
+        action: "sale.payment_added",
+        targetType: "sale",
+        targetId: saleId,
+        after: { method: dto.method, amount: dto.amount },
+        correlationId,
+      });
+      return this.loadSaleDetail(tx, businessId, saleId);
+    });
+  }
+
+  async removePayment(
+    actingUserId: string,
+    businessId: string,
+    saleId: string,
+    paymentId: string,
+    correlationId: string,
+  ) {
+    await this.memberships.requirePermission(actingUserId, businessId, "sales.create");
+    await this.requireInProgress(businessId, saleId);
+    await this.requirePayment(businessId, saleId, paymentId);
+
+    return this.prisma.$transaction(async (tx) => {
+      await tx.payment.delete({ where: { id: paymentId } });
+      await this.audit.record(tx, {
+        businessId,
+        actorUserId: actingUserId,
+        action: "sale.payment_removed",
+        targetType: "sale",
+        targetId: saleId,
+        after: { paymentId },
+        correlationId,
+      });
+      return this.loadSaleDetail(tx, businessId, saleId);
+    });
+  }
+
+  /** SPECS.md 10.3: an employee manually confirms a qr/transfer payment actually arrived. */
+  async verifyPayment(
+    actingUserId: string,
+    businessId: string,
+    saleId: string,
+    paymentId: string,
+    correlationId: string,
+  ) {
+    await this.memberships.requirePermission(actingUserId, businessId, "sales.create");
+    await this.requireInProgress(businessId, saleId);
+    const payment = await this.requirePayment(businessId, saleId, paymentId);
+    if (isSelfVerifyingMethod(payment.method)) {
+      throw new AppException(
+        "SALE_PAYMENT_VERIFICATION_NOT_APPLICABLE",
+        "This payment method does not require manual verification.",
+        HttpStatus.CONFLICT,
+      );
+    }
+    if (payment.verifiedAt) {
+      throw new AppException(
+        "SALE_PAYMENT_ALREADY_VERIFIED",
+        "This payment was already verified.",
+        HttpStatus.CONFLICT,
+      );
+    }
+    const now = this.clock.now();
+
+    return this.prisma.$transaction(async (tx) => {
+      await tx.payment.update({ where: { id: paymentId }, data: { verifiedAt: now } });
+      await this.audit.record(tx, {
+        businessId,
+        actorUserId: actingUserId,
+        action: "sale.payment_verified",
+        targetType: "sale",
+        targetId: saleId,
+        after: { paymentId },
+        correlationId,
+      });
+      return this.loadSaleDetail(tx, businessId, saleId);
     });
   }
 
@@ -261,7 +405,7 @@ export class SalesService {
     const now = this.clock.now();
 
     return this.prisma.$transaction(async (tx) => {
-      const sale = await tx.sale.update({
+      await tx.sale.update({
         where: { id: saleId },
         data: { status: "cancelled", cancelledAt: now },
       });
@@ -275,19 +419,21 @@ export class SalesService {
         after: { status: "cancelled" },
         correlationId,
       });
-      return sale;
+      return this.loadSaleDetail(tx, businessId, saleId);
     });
   }
 
   /**
-   * The `in_progress` -> `completed` transition only -- validates the
+   * The `in_progress` -> `completed` transition -- validates the
    * aggregate's own invariants (must still be in progress, must have at
-   * least one line) and nothing else. Takes the caller's transaction
-   * client rather than opening its own: ROADMAP.md's later "settle sales
-   * with stock and cash effects" checkpoint is what actually calls this,
-   * as one step inside its own single atomic "complete sale" command
-   * (payment/inventory/cash effects and their own audit record are that
-   * checkpoint's responsibility, not this method's).
+   * least one line, and its payment allocation must satisfy the total --
+   * SPECS.md 6.6: "The sale can only complete when the required amount is
+   * satisfied") and records the resulting `changeDue`. Takes the
+   * caller's transaction client rather than opening its own: ROADMAP.md's
+   * later "settle sales with stock and cash effects" checkpoint is what
+   * actually calls this, as one step inside its own single atomic
+   * "complete sale" command (the inventory/cash effects and their own
+   * audit record are that checkpoint's responsibility, not this method's).
    */
   async complete(tx: Prisma.TransactionClient, businessId: string, saleId: string): Promise<Sale> {
     const sale = await tx.sale.findUnique({ where: { id: saleId } });
@@ -313,9 +459,25 @@ export class SalesService {
         HttpStatus.CONFLICT,
       );
     }
+    const payments = await tx.payment.findMany({ where: { saleId } });
+    const allocation = resolvePaymentAllocation(
+      sale.total,
+      payments.map((payment) => ({
+        method: payment.method,
+        amount: payment.amount,
+        verifiedAt: payment.verifiedAt,
+      })),
+    );
+    if (!allocation.satisfied) {
+      throw new AppException(
+        "SALE_PAYMENT_NOT_SATISFIED",
+        "This sale's payment allocation does not yet satisfy its total.",
+        HttpStatus.CONFLICT,
+      );
+    }
     return tx.sale.update({
       where: { id: saleId },
-      data: { status: "completed", completedAt: this.clock.now() },
+      data: { status: "completed", completedAt: this.clock.now(), changeDue: allocation.changeDue },
     });
   }
 
@@ -330,7 +492,7 @@ export class SalesService {
    * this to the employee whose sale it was is the closest honest fit).
    */
   async abandon(businessId: string, saleId: string, correlationId: string): Promise<Sale> {
-    const sale = await this.requireSale(businessId, saleId);
+    const sale = await this.requireSale(businessId, saleId, this.prisma);
     const { salePolicy } = await this.configuration.getSections(businessId);
     const now = this.clock.now();
 
@@ -363,7 +525,7 @@ export class SalesService {
 
   async findOne(actingUserId: string, businessId: string, saleId: string) {
     await this.memberships.requireActiveMembership(actingUserId, businessId);
-    return this.requireSale(businessId, saleId);
+    return this.loadSaleDetail(this.prisma, businessId, saleId);
   }
 
   private async requirePricedProduct(actingUserId: string, businessId: string, productId: string) {
@@ -378,11 +540,8 @@ export class SalesService {
     return { ...product, pricing: product.pricing };
   }
 
-  private async requireSale(businessId: string, saleId: string) {
-    const sale = await this.prisma.sale.findUnique({
-      where: { id: saleId },
-      include: { lines: true },
-    });
+  private async requireSale(businessId: string, saleId: string, client: SaleClient) {
+    const sale = await client.sale.findUnique({ where: { id: saleId } });
     if (!sale || sale.businessId !== businessId) {
       throw new AppException(
         "SALE_NOT_FOUND",
@@ -394,7 +553,7 @@ export class SalesService {
   }
 
   private async requireInProgress(businessId: string, saleId: string) {
-    const sale = await this.requireSale(businessId, saleId);
+    const sale = await this.requireSale(businessId, saleId, this.prisma);
     if (sale.status !== "in_progress") {
       throw new AppException(
         "SALE_NOT_IN_PROGRESS",
@@ -417,9 +576,58 @@ export class SalesService {
     return line;
   }
 
-  private async recomputeTotal(tx: Prisma.TransactionClient, businessId: string, saleId: string) {
+  private async requirePayment(businessId: string, saleId: string, paymentId: string) {
+    const payment = await this.prisma.payment.findUnique({ where: { id: paymentId } });
+    if (!payment || payment.businessId !== businessId || payment.saleId !== saleId) {
+      throw new AppException(
+        "SALE_PAYMENT_NOT_FOUND",
+        "Payment not found on this sale.",
+        HttpStatus.NOT_FOUND,
+      );
+    }
+    return payment;
+  }
+
+  private async recomputeTotal(tx: Prisma.TransactionClient, saleId: string): Promise<number> {
     const lines = await tx.saleLine.findMany({ where: { saleId } });
     const total = lines.reduce((sum, line) => sum + line.lineTotal, 0);
-    return tx.sale.update({ where: { id: saleId }, data: { total }, include: { lines: true } });
+    await tx.sale.update({ where: { id: saleId }, data: { total } });
+    return total;
+  }
+
+  /** The full public shape: the sale, its lines, its payments, and the payment allocation resolved against the sale's current total (@bmp/domain's resolvePaymentAllocation) -- so a caller never has to re-derive "is this satisfied / how much change" itself. */
+  private async loadSaleDetail(client: SaleClient, businessId: string, saleId: string) {
+    const sale = await client.sale.findUnique({
+      where: { id: saleId },
+      // Insertion order -- a receipt should show lines/payments in the
+      // order they were actually scanned/allocated, not an otherwise
+      // unspecified row order. Ordered by `id`, not `createdAt`: IDs are
+      // UUIDv7 (D-033) and so already sort chronologically by
+      // construction (the same reasoning AuditService.list's own doc
+      // comment gives), which also sidesteps `createdAt`'s coarser,
+      // per-transaction-frozen `CURRENT_TIMESTAMP` value -- two lines
+      // inserted within the same transaction would otherwise share one
+      // identical timestamp and sort arbitrarily against each other.
+      include: {
+        lines: { orderBy: { id: "asc" } },
+        payments: { orderBy: { id: "asc" } },
+      },
+    });
+    if (!sale || sale.businessId !== businessId) {
+      throw new AppException(
+        "SALE_NOT_FOUND",
+        "Sale not found in this business.",
+        HttpStatus.NOT_FOUND,
+      );
+    }
+    const paymentStatus = resolvePaymentAllocation(
+      sale.total,
+      sale.payments.map((payment) => ({
+        method: payment.method,
+        amount: payment.amount,
+        verifiedAt: payment.verifiedAt,
+      })),
+    );
+    return { ...sale, paymentStatus };
   }
 }

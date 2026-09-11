@@ -34,6 +34,7 @@ describe("Sale aggregate (HTTP)", () => {
   });
 
   beforeEach(async () => {
+    await prisma.payment.deleteMany();
     await prisma.saleLine.deleteMany();
     await prisma.sale.deleteMany();
     await prisma.productPricing.deleteMany();
@@ -163,6 +164,85 @@ describe("Sale aggregate (HTTP)", () => {
       .set("Authorization", `Bearer ${ownerToken}`)
       .expect(200);
     expect(cancelled.body.status).toBe("cancelled");
+  });
+
+  it("splits a payment across cash and card, verifies a qr payment, and removes a payment", async () => {
+    const ownerToken = await registerAndLogin("sale-http-owner6@kiosk.test");
+    const { businessId, productId } = await setUpBusinessWithPricedProduct(
+      ownerToken,
+      "Sales HTTP Kiosk 6",
+    );
+    const started = await request(app.getHttpServer())
+      .post(`/businesses/${businessId}/sales`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ productId, quantity: 1 })
+      .expect(201);
+    const saleId = started.body.id as string;
+    expect(started.body.total).toBe(10000);
+
+    const withCash = await request(app.getHttpServer())
+      .post(`/businesses/${businessId}/sales/${saleId}/payments`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ method: "cash", amount: 4000 })
+      .expect(201);
+    expect(withCash.body.payments[0].verifiedAt).not.toBeNull();
+
+    const withCard = await request(app.getHttpServer())
+      .post(`/businesses/${businessId}/sales/${saleId}/payments`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ method: "card", amount: 6000 })
+      .expect(201);
+    expect(withCard.body.paymentStatus).toEqual({
+      satisfied: true,
+      changeDue: 0,
+      totalTendered: 10000,
+    });
+
+    const cardPaymentId = withCard.body.payments.find(
+      (payment: { method: string }) => payment.method === "card",
+    ).id as string;
+    const withoutCard = await request(app.getHttpServer())
+      .delete(`/businesses/${businessId}/sales/${saleId}/payments/${cardPaymentId}`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .expect(200);
+    expect(withoutCard.body.payments).toHaveLength(1);
+    expect(withoutCard.body.paymentStatus.satisfied).toBe(false);
+
+    const withQr = await request(app.getHttpServer())
+      .post(`/businesses/${businessId}/sales/${saleId}/payments`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ method: "qr", amount: 6000 })
+      .expect(201);
+    const qrPaymentId = withQr.body.payments.find(
+      (payment: { method: string }) => payment.method === "qr",
+    ).id as string;
+    expect(withQr.body.paymentStatus.satisfied).toBe(false);
+
+    const verified = await request(app.getHttpServer())
+      .post(`/businesses/${businessId}/sales/${saleId}/payments/${qrPaymentId}/verify`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .expect(200);
+    expect(verified.body.paymentStatus.satisfied).toBe(true);
+  });
+
+  it("rejects a card payment that alone would exceed the sale's total, with a 409", async () => {
+    const ownerToken = await registerAndLogin("sale-http-owner7@kiosk.test");
+    const { businessId, productId } = await setUpBusinessWithPricedProduct(
+      ownerToken,
+      "Sales HTTP Kiosk 7",
+    );
+    const started = await request(app.getHttpServer())
+      .post(`/businesses/${businessId}/sales`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ productId, quantity: 1 })
+      .expect(201);
+
+    const rejected = await request(app.getHttpServer())
+      .post(`/businesses/${businessId}/sales/${started.body.id}/payments`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ method: "card", amount: 10500 })
+      .expect(409);
+    expect(rejected.body.error.code).toBe("SALE_PAYMENT_EXCEEDS_TOTAL");
   });
 
   it("rejects a non-positive quantity with a 400", async () => {

@@ -14,6 +14,7 @@ import { CorrelationId } from "../common/correlation-id.decorator";
 import { AccessTokenGuard, type RequestWithUser } from "../identity/access-token.guard";
 import { CurrentUser } from "../identity/current-user.decorator";
 import { BusinessAuthorizationGuard } from "../memberships/business-authorization.guard";
+import { AddPaymentDto } from "./dto/add-payment.dto";
 import { SaleLineInputDto } from "./dto/sale-line-input.dto";
 import { UpdateSaleLineDto } from "./dto/update-sale-line.dto";
 import { SalesService } from "./sales.service";
@@ -21,14 +22,17 @@ import { SalesService } from "./sales.service";
 /**
  * Not yet called by the POS UI (see SalesService's own doc comment) --
  * exercised here and in tests as a complete, standalone HTTP surface,
- * ready for ROADMAP.md's later checkpoints to wire up. `complete` is
- * deliberately NOT exposed here: SalesService.complete is composable-only,
- * meant to be called from within the later "settle sales with stock and
- * cash effects" checkpoint's own transaction, not as its own bare action
- * (SPECS.md 6.6: "The sale can only complete when the required amount is
- * satisfied" -- payment validation does not exist yet). `abandon` is
- * likewise not exposed: it is meant to be driven by a policy check
- * (SalesService.isSaleAbandoned), not a direct user action.
+ * ready for ROADMAP.md's later checkpoints to wire up. Lines and payments
+ * (SPECS.md 6.6/10.2's split payments) are both built up incrementally
+ * while a sale is `in_progress`. `complete` is deliberately NOT exposed
+ * here: SalesService.complete is composable-only, meant to be called from
+ * within the later "settle sales with stock and cash effects"
+ * checkpoint's own transaction, not as its own bare action (the
+ * inventory/cash effects that checkpoint adds do not exist yet, even
+ * though payment-allocation validation itself already runs inside
+ * `complete`). `abandon` is likewise not exposed: it is meant to be
+ * driven by a policy check (SalesService.isSaleAbandoned), not a direct
+ * user action.
  */
 @Controller("businesses/:businessId/sales")
 @UseGuards(AccessTokenGuard, BusinessAuthorizationGuard)
@@ -104,5 +108,39 @@ export class SalesController {
     @CorrelationId() correlationId: string,
   ) {
     return this.sales.cancel(user.id, businessId, saleId, correlationId);
+  }
+
+  @Post(":saleId/payments")
+  addPayment(
+    @CurrentUser() user: RequestWithUser["user"],
+    @Param("businessId") businessId: string,
+    @Param("saleId") saleId: string,
+    @Body() dto: AddPaymentDto,
+    @CorrelationId() correlationId: string,
+  ) {
+    return this.sales.addPayment(user.id, businessId, saleId, dto, correlationId);
+  }
+
+  @Delete(":saleId/payments/:paymentId")
+  removePayment(
+    @CurrentUser() user: RequestWithUser["user"],
+    @Param("businessId") businessId: string,
+    @Param("saleId") saleId: string,
+    @Param("paymentId") paymentId: string,
+    @CorrelationId() correlationId: string,
+  ) {
+    return this.sales.removePayment(user.id, businessId, saleId, paymentId, correlationId);
+  }
+
+  @Post(":saleId/payments/:paymentId/verify")
+  @HttpCode(HttpStatus.OK)
+  verifyPayment(
+    @CurrentUser() user: RequestWithUser["user"],
+    @Param("businessId") businessId: string,
+    @Param("saleId") saleId: string,
+    @Param("paymentId") paymentId: string,
+    @CorrelationId() correlationId: string,
+  ) {
+    return this.sales.verifyPayment(user.id, businessId, saleId, paymentId, correlationId);
   }
 }

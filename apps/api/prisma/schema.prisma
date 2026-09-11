@@ -113,6 +113,7 @@ model Business {
   expirationBatches  ProductExpirationBatch[]
   sales              Sale[]
   saleLines          SaleLine[]
+  payments           Payment[]
 
   @@map("businesses")
 }
@@ -766,11 +767,22 @@ model Sale {
   cancelledAt DateTime? @map("cancelled_at")
   abandonedAt DateTime? @map("abandoned_at")
 
+  // Set only at the `completed` transition, from
+  // @bmp/domain's resolvePaymentAllocation -- ROADMAP.md "add split
+  // payment settlement": cash tendered beyond what the sale still owed
+  // once every other method was applied. Denormalized (fully derivable
+  // from `total` + `payments`) for the same reason ProductPricing stores
+  // its own computed profit/marginPercentBasisPoints rather than making
+  // every reader recompute it -- a receipt/history view should not need
+  // to re-run the allocation rule just to show the change given.
+  changeDue Int? @map("change_due")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
   business Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
   lines    SaleLine[]
+  payments Payment[]
 
   @@unique([id, businessId])
   @@index([businessId, status])
@@ -823,4 +835,54 @@ model SaleLine {
   @@index([saleId])
   @@index([businessId, productId])
   @@map("sale_lines")
+}
+
+// SPECS.md 10.1/D-012's four methods.
+enum PaymentMethod {
+  cash
+  qr
+  card
+  transfer
+}
+
+// One payment allocation per method within a sale (ROADMAP.md "add split
+// payment settlement"; SPECS.md 6.6/10.2: "The employee may split
+// payment across multiple methods"). Built up via SalesService.addPayment/
+// removePayment/verifyPayment while the sale is still `in_progress` --
+// the same pattern as SaleLine -- and validated against the sale total
+// with @bmp/domain's resolvePaymentAllocation. D-010 still holds: these
+// rows carry no cash/financial effect of their own until the sale
+// actually completes (ROADMAP.md's later "settle sales with stock and
+// cash effects" checkpoint writes the real cash-register effect for the
+// cash portion); an abandoned or cancelled sale's payment rows never
+// produced one.
+model Payment {
+  id         String        @id
+  saleId     String        @map("sale_id")
+  businessId String        @map("business_id")
+  method     PaymentMethod
+
+  /// Integer ARS minor units (D-005). For "cash", the amount actually
+  /// tendered (may exceed what's owed -- the excess is change, see
+  /// @bmp/domain's resolvePaymentAllocation); for every other method, the
+  /// exact amount charged -- SPECS.md 10.3's manually-verified methods
+  /// (qr/transfer) cannot represent an "overpayment" the way physical
+  /// cash can.
+  amount Int
+
+  /// SPECS.md 10.3: "Initially, QR and transfer payments are manually
+  /// verified by the employee." Null until verified via
+  /// SalesService.verifyPayment; cash and card are self-verifying --
+  /// SalesService.addPayment sets this immediately for those two methods,
+  /// since neither has a separate confirmation step yet (D-012's "future
+  /// integrations may support automatic verification" is not built here).
+  verifiedAt DateTime? @map("verified_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  sale     Sale     @relation(fields: [saleId, businessId], references: [id, businessId], onDelete: Cascade)
+
+  @@index([saleId])
+  @@map("payments")
 }

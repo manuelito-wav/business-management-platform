@@ -77,6 +77,7 @@ describe("Sale aggregate and state transitions", () => {
 
   beforeEach(async () => {
     testContext.clock.set(new Date("2026-06-01T00:00:00.000Z"));
+    await prisma.payment.deleteMany();
     await prisma.saleLine.deleteMany();
     await prisma.sale.deleteMany();
     await prisma.productPricing.deleteMany();
@@ -335,11 +336,19 @@ describe("Sale aggregate and state transitions", () => {
       { productId: product.id, quantity: 1 },
       TEST_CORRELATION_ID,
     );
+    await sales.addPayment(
+      owner.id,
+      business.id,
+      sale.id,
+      { method: "cash", amount: 10000 },
+      TEST_CORRELATION_ID,
+    );
 
     const completed = await prisma.$transaction((tx) => sales.complete(tx, business.id, sale.id));
 
     expect(completed.status).toBe("completed");
     expect(completed.completedAt).toEqual(new Date("2026-06-01T00:00:00.000Z"));
+    expect(completed.changeDue).toBe(0);
   });
 
   it("rejects completing a sale with no lines", async () => {
@@ -446,12 +455,245 @@ describe("Sale aggregate and state transitions", () => {
         { productId: product.id, quantity: 1 },
         TEST_CORRELATION_ID,
       );
+      await sales.addPayment(
+        owner.id,
+        business.id,
+        sale.id,
+        { method: "cash", amount: 10000 },
+        TEST_CORRELATION_ID,
+      );
       await prisma.$transaction((tx) => sales.complete(tx, business.id, sale.id));
       testContext.clock.advanceMs(300 * 60_000);
 
       await expect(sales.abandon(business.id, sale.id, TEST_CORRELATION_ID)).rejects.toMatchObject({
         code: "SALE_NOT_ABANDONABLE",
       });
+    });
+  });
+
+  describe("split payment settlement (SPECS.md 6.6/10.2)", () => {
+    async function startTenThousandSale(emailPrefix: string) {
+      const { owner, business, product } = await createOwnerWithPricedProduct(emailPrefix);
+      const sale = await sales.start(
+        owner.id,
+        business.id,
+        { productId: product.id, quantity: 1 },
+        TEST_CORRELATION_ID,
+      );
+      return { owner, business, sale };
+    }
+
+    it("cash and card self-verify immediately; matches ROADMAP's own split example", async () => {
+      const { owner, business, sale } = await startTenThousandSale("sale-pay1");
+
+      await sales.addPayment(
+        owner.id,
+        business.id,
+        sale.id,
+        { method: "cash", amount: 4000 },
+        TEST_CORRELATION_ID,
+      );
+      const updated = await sales.addPayment(
+        owner.id,
+        business.id,
+        sale.id,
+        { method: "card", amount: 6000 },
+        TEST_CORRELATION_ID,
+      );
+
+      expect(updated.payments).toHaveLength(2);
+      expect(updated.payments.every((payment) => payment.verifiedAt !== null)).toBe(true);
+      expect(updated.paymentStatus).toEqual({
+        satisfied: true,
+        changeDue: 0,
+        totalTendered: 10000,
+      });
+    });
+
+    it("qr and transfer start unverified and require an explicit verifyPayment call", async () => {
+      const { owner, business, sale } = await startTenThousandSale("sale-pay2");
+
+      const afterAdd = await sales.addPayment(
+        owner.id,
+        business.id,
+        sale.id,
+        { method: "qr", amount: 10000 },
+        TEST_CORRELATION_ID,
+      );
+      expect(afterAdd.payments[0]?.verifiedAt).toBeNull();
+      expect(afterAdd.paymentStatus.satisfied).toBe(false);
+
+      const verified = await sales.verifyPayment(
+        owner.id,
+        business.id,
+        sale.id,
+        afterAdd.payments[0]!.id,
+        TEST_CORRELATION_ID,
+      );
+      expect(verified.payments[0]?.verifiedAt).toEqual(new Date("2026-06-01T00:00:00.000Z"));
+      expect(verified.paymentStatus.satisfied).toBe(true);
+    });
+
+    it("computes change due when cash tendered exceeds what remains", async () => {
+      const { owner, business, sale } = await startTenThousandSale("sale-pay3");
+
+      const updated = await sales.addPayment(
+        owner.id,
+        business.id,
+        sale.id,
+        { method: "cash", amount: 15000 },
+        TEST_CORRELATION_ID,
+      );
+
+      expect(updated.paymentStatus).toEqual({
+        satisfied: true,
+        changeDue: 5000,
+        totalTendered: 15000,
+      });
+    });
+
+    it("rejects a non-cash payment that alone would exceed the sale's total", async () => {
+      const { owner, business, sale } = await startTenThousandSale("sale-pay4");
+
+      await expect(
+        sales.addPayment(
+          owner.id,
+          business.id,
+          sale.id,
+          { method: "card", amount: 10500 },
+          TEST_CORRELATION_ID,
+        ),
+      ).rejects.toMatchObject({ code: "SALE_PAYMENT_EXCEEDS_TOTAL" });
+    });
+
+    it("rejects a payment method the business has not enabled", async () => {
+      const { owner, business, sale } = await startTenThousandSale("sale-pay5");
+      await configuration.updateSections(
+        owner.id,
+        business.id,
+        { paymentMethods: { enabled: ["cash"] } },
+        TEST_CORRELATION_ID,
+      );
+
+      await expect(
+        sales.addPayment(
+          owner.id,
+          business.id,
+          sale.id,
+          { method: "card", amount: 10000 },
+          TEST_CORRELATION_ID,
+        ),
+      ).rejects.toMatchObject({ code: "SALE_PAYMENT_METHOD_DISABLED" });
+    });
+
+    it("removePayment removes one allocation and recomputes paymentStatus", async () => {
+      const { owner, business, sale } = await startTenThousandSale("sale-pay6");
+      const withPayment = await sales.addPayment(
+        owner.id,
+        business.id,
+        sale.id,
+        { method: "cash", amount: 10000 },
+        TEST_CORRELATION_ID,
+      );
+
+      const removed = await sales.removePayment(
+        owner.id,
+        business.id,
+        sale.id,
+        withPayment.payments[0]!.id,
+        TEST_CORRELATION_ID,
+      );
+
+      expect(removed.payments).toHaveLength(0);
+      expect(removed.paymentStatus.satisfied).toBe(false);
+    });
+
+    it("rejects verifying a self-verifying method (cash/card)", async () => {
+      const { owner, business, sale } = await startTenThousandSale("sale-pay7");
+      const withPayment = await sales.addPayment(
+        owner.id,
+        business.id,
+        sale.id,
+        { method: "cash", amount: 10000 },
+        TEST_CORRELATION_ID,
+      );
+
+      await expect(
+        sales.verifyPayment(
+          owner.id,
+          business.id,
+          sale.id,
+          withPayment.payments[0]!.id,
+          TEST_CORRELATION_ID,
+        ),
+      ).rejects.toMatchObject({ code: "SALE_PAYMENT_VERIFICATION_NOT_APPLICABLE" });
+    });
+
+    it("rejects verifying an already-verified payment a second time", async () => {
+      const { owner, business, sale } = await startTenThousandSale("sale-pay8");
+      const withPayment = await sales.addPayment(
+        owner.id,
+        business.id,
+        sale.id,
+        { method: "transfer", amount: 10000 },
+        TEST_CORRELATION_ID,
+      );
+      const paymentId = withPayment.payments[0]!.id;
+      await sales.verifyPayment(owner.id, business.id, sale.id, paymentId, TEST_CORRELATION_ID);
+
+      await expect(
+        sales.verifyPayment(owner.id, business.id, sale.id, paymentId, TEST_CORRELATION_ID),
+      ).rejects.toMatchObject({ code: "SALE_PAYMENT_ALREADY_VERIFIED" });
+    });
+
+    it("rejects mutating payments once the sale is no longer in_progress", async () => {
+      const { owner, business, sale } = await startTenThousandSale("sale-pay9");
+      await sales.cancel(owner.id, business.id, sale.id, TEST_CORRELATION_ID);
+
+      await expect(
+        sales.addPayment(
+          owner.id,
+          business.id,
+          sale.id,
+          { method: "cash", amount: 10000 },
+          TEST_CORRELATION_ID,
+        ),
+      ).rejects.toMatchObject({ code: "SALE_NOT_IN_PROGRESS" });
+    });
+
+    it("complete rejects an unsatisfied allocation and succeeds once it is satisfied, recording changeDue", async () => {
+      const { owner, business, sale } = await startTenThousandSale("sale-pay10");
+
+      await expect(
+        prisma.$transaction((tx) => sales.complete(tx, business.id, sale.id)),
+      ).rejects.toMatchObject({ code: "SALE_PAYMENT_NOT_SATISFIED" });
+
+      await sales.addPayment(
+        owner.id,
+        business.id,
+        sale.id,
+        { method: "cash", amount: 10300 },
+        TEST_CORRELATION_ID,
+      );
+      const completed = await prisma.$transaction((tx) => sales.complete(tx, business.id, sale.id));
+
+      expect(completed.status).toBe("completed");
+      expect(completed.changeDue).toBe(300);
+    });
+
+    it("complete rejects while a qr/transfer payment is still unverified even if the amounts add up", async () => {
+      const { owner, business, sale } = await startTenThousandSale("sale-pay11");
+      await sales.addPayment(
+        owner.id,
+        business.id,
+        sale.id,
+        { method: "qr", amount: 10000 },
+        TEST_CORRELATION_ID,
+      );
+
+      await expect(
+        prisma.$transaction((tx) => sales.complete(tx, business.id, sale.id)),
+      ).rejects.toMatchObject({ code: "SALE_PAYMENT_NOT_SATISFIED" });
     });
   });
 

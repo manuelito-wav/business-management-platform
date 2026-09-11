@@ -7,6 +7,12 @@
 export { type Clock, SystemClock } from "./clock";
 export { type IdGenerator, Uuidv4Generator, Uuidv7Generator } from "./id-generator";
 export {
+  type PaymentAllocationInput,
+  type PaymentAllocationResult,
+  type PaymentMethod,
+  resolvePaymentAllocation,
+} from "./payments";
+export {
   assertValidMoneyAmount,
   isValidMoneyAmount,
   type PricingInputMode,
