@@ -38,6 +38,8 @@ describe("Inventory stock (HTTP)", () => {
     await prisma.productStock.deleteMany();
     await prisma.productPricing.deleteMany();
     await prisma.productIdentifier.deleteMany();
+    await prisma.saleLine.deleteMany();
+    await prisma.sale.deleteMany();
     await prisma.product.deleteMany();
     await prisma.category.deleteMany();
     await prisma.auditEvent.deleteMany();

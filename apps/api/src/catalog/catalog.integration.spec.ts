@@ -55,6 +55,8 @@ describe("Product catalog: categories, products, and identifiers", () => {
   beforeEach(async () => {
     await prisma.productPricing.deleteMany();
     await prisma.productIdentifier.deleteMany();
+    await prisma.saleLine.deleteMany();
+    await prisma.sale.deleteMany();
     await prisma.product.deleteMany();
     await prisma.category.deleteMany();
     await prisma.auditEvent.deleteMany();
