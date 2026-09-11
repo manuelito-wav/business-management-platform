@@ -289,7 +289,7 @@ first end-to-end operational slice.
   D-012 and configurable per business thereafter, with split payments.
   Validate that payment allocation satisfies the total under explicit rounding
   and overpayment/change rules; QR/transfer are employee-verified initially.
-  - Commit: `feat: add split payment settlement`
+  - Commit: `feat: add split payment settlement` -- done (dbc6e57)
 - Implement cash deposit, withdrawal, supplier payment, expense, and opening
   fund as auditable cash ledger entries, including the sale-settlement and
   refund-reversal movement types defined in SPECS.md §11.4; include allowed
