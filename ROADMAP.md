@@ -275,7 +275,7 @@ first end-to-end operational slice.
   ice, beverages, current offers, and other local needs. Allow optional images
   for shortcuts while keeping configuration, categories, and catalog search
   independent from product images.
-  - Commit: `feat: add configurable quick products`
+  - Commit: `feat: add configurable quick products` -- done (b62c500)
 - Implement multiple independent in-progress sale tabs in client state, with
   lightweight strategic local draft recovery using the Phase 2 store. Never
   write an inventory or financial fact for a scanned item in an unfinished tab.
