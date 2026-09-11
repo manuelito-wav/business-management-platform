@@ -284,7 +284,7 @@ first end-to-end operational slice.
   quantity, cost/price at sale time), totals, first-item timestamp, status, and
   explicit transitions. Define abandonment rules so inactive tabs do not skew
   ticket-duration reporting.
-  - Commit: `feat: add sale aggregate and state transitions`
+  - Commit: `feat: add sale aggregate and state transitions` -- done (05c1bb9)
 - Implement cash/QR/card/transfer payment methods, all enabled by default per
   D-012 and configurable per business thereafter, with split payments.
   Validate that payment allocation satisfies the total under explicit rounding
