@@ -279,7 +279,7 @@ first end-to-end operational slice.
 - Implement multiple independent in-progress sale tabs in client state, with
   lightweight strategic local draft recovery using the Phase 2 store. Never
   write an inventory or financial fact for a scanned item in an unfinished tab.
-  - Commit: `feat: add multi-tab POS drafts`
+  - Commit: `feat: add multi-tab POS drafts` -- done (8788c8f)
 - Implement an immutable sale aggregate with line snapshots (name, unit,
   quantity, cost/price at sale time), totals, first-item timestamp, status, and
   explicit transitions. Define abandonment rules so inactive tabs do not skew
