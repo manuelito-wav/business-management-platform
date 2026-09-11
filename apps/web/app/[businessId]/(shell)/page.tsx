@@ -25,6 +25,15 @@ export default function DashboardPage() {
         posterior del roadmap.
       </p>
 
+      {hasPermission("sales.create") && (
+        <Link
+          href={`/${businessId}/pos`}
+          className="bg-accent text-accent-foreground mt-6 inline-block rounded px-4 py-3 text-sm font-semibold"
+        >
+          Ir al punto de venta
+        </Link>
+      )}
+
       <section className="mt-6 rounded border border-gray-200 p-4">
         <h2 className="text-sm font-medium text-gray-900">Accesos rápidos</h2>
         <ul className="mt-2 space-y-1 text-sm">

@@ -40,6 +40,24 @@ interface AuthContextValue {
    * error is thrown for the caller to handle.
    */
   authorizedRequest: <T = unknown>(path: string, options?: AuthorizedRequestOptions) => Promise<T>;
+  /**
+   * Escape hatch for code that needs the raw bearer token for its own
+   * fetch calls instead of going through authorizedRequest -- currently
+   * only lib/pos-cache/refresh.ts's refreshPosCache, whose already-tested
+   * signature takes a token directly rather than an apiRequest-shaped
+   * fetcher. Returns null while unauthenticated.
+   */
+  getAccessToken: () => string | null;
+  /**
+   * The resolved API origin and fetch implementation AuthProvider itself
+   * uses (NEXT_PUBLIC_API_URL / the global fetch by default, injectable
+   * in tests) -- exposed so other code needing to make its own raw fetch
+   * calls (currently only useRefreshPosCache -> refreshPosCache) shares
+   * the exact same configuration instead of re-reading the env var and
+   * defaulting to the real global fetch independently.
+   */
+  apiBaseUrl: string;
+  fetchImpl: typeof fetch;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -188,9 +206,20 @@ export function AuthProvider({ children, apiBaseUrl, fetchImpl }: AuthProviderPr
     [baseUrl, clearSession, fetchFn, refreshSession],
   );
 
+  const getAccessToken = useCallback(() => accessTokenRef.current, []);
+
   const value = useMemo<AuthContextValue>(
-    () => ({ status, user, login, logout, authorizedRequest }),
-    [status, user, login, logout, authorizedRequest],
+    () => ({
+      status,
+      user,
+      login,
+      logout,
+      authorizedRequest,
+      getAccessToken,
+      apiBaseUrl: baseUrl,
+      fetchImpl: fetchFn,
+    }),
+    [status, user, login, logout, authorizedRequest, getAccessToken, baseUrl, fetchFn],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

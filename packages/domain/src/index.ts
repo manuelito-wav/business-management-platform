@@ -12,6 +12,7 @@ export {
   type PricingInputMode,
   resolvePricing,
   type ResolvedPricing,
+  roundedIntegerMultiplyDivide,
   salePriceForTargetMarginPercent,
   salePriceForTargetProfit,
 } from "./pricing";

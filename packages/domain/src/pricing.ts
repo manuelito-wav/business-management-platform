@@ -104,8 +104,15 @@ export function salePriceForTargetMarginPercent(
  * throughout (the multiplication never passes through a JS float), with
  * half-up rounding (ties round away from zero) applied to the final
  * division. `denominator` must be a positive integer.
+ *
+ * Exported (not just this file's internal helper) because it is the
+ * general-purpose "exact proportional integer amount" primitive D-005
+ * requires anywhere money scales by a non-1:1 ratio -- e.g. a weighted
+ * product's line total (price-per-kilogram * grams / 1000, ROADMAP.md
+ * "add POS product discovery and cart") -- not just this file's own
+ * cost/Margin-%/target-profit formulas.
  */
-function roundedIntegerMultiplyDivide(a: number, b: number, denominator: number): number {
+export function roundedIntegerMultiplyDivide(a: number, b: number, denominator: number): number {
   if (
     !Number.isInteger(a) ||
     !Number.isInteger(b) ||

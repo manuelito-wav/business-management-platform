@@ -3,6 +3,7 @@ import {
   assertValidMoneyAmount,
   isValidMoneyAmount,
   resolvePricing,
+  roundedIntegerMultiplyDivide,
   salePriceForTargetMarginPercent,
   salePriceForTargetProfit,
 } from "./pricing";
@@ -135,5 +136,24 @@ describe("isValidMoneyAmount / assertValidMoneyAmount", () => {
     expect(() => assertValidMoneyAmount(-1, "costPrice")).toThrow(/Invalid costPrice/);
     expect(() => assertValidMoneyAmount(1.5, "salePrice")).toThrow(/Invalid salePrice/);
     expect(() => assertValidMoneyAmount(500, "costPrice")).not.toThrow();
+  });
+});
+
+describe("roundedIntegerMultiplyDivide", () => {
+  it("computes an exact proportional amount, e.g. a weighted line total (price-per-kg * grams / 1000)", () => {
+    // $500.00/kg (50000 minor units) for 750g -> $375.00 (37500).
+    expect(roundedIntegerMultiplyDivide(50000, 750, 1000)).toBe(37500);
+  });
+
+  it("rounds half-up rather than truncating or using float division", () => {
+    // 10 * 5 / 4 = 12.5 -> 13, never 12 (a plain `Math.floor` truncation)
+    // or a value drifted by float imprecision.
+    expect(roundedIntegerMultiplyDivide(10, 5, 4)).toBe(13);
+    expect(roundedIntegerMultiplyDivide(-10, 5, 4)).toBe(-13);
+  });
+
+  it("rejects non-integer operands and a non-positive denominator", () => {
+    expect(() => roundedIntegerMultiplyDivide(1.5, 2, 3)).toThrow(/requires integer operands/);
+    expect(() => roundedIntegerMultiplyDivide(1, 2, 0)).toThrow(/requires integer operands/);
   });
 });

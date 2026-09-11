@@ -17,6 +17,7 @@ function AuthProbe() {
     <div>
       <span data-testid="status">{auth.status}</span>
       <span data-testid="email">{auth.user?.email ?? ""}</span>
+      <span data-testid="access-token">{auth.getAccessToken() ?? ""}</span>
       <button onClick={() => void auth.login("owner@kiosk.test", "correct-horse-1")}>login</button>
       <button onClick={() => void auth.logout()}>logout</button>
       <button
@@ -82,6 +83,39 @@ describe("AuthProvider", () => {
 
     await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent("authenticated"));
     expect(screen.getByTestId("email")).toHaveTextContent("owner@kiosk.test");
+  });
+
+  it("getAccessToken exposes the current bearer token for callers that need it directly, and clears on logout", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/auth/refresh")) {
+        return jsonResponse({
+          accessToken: "token-1",
+          accessTokenExpiresAt: new Date().toISOString(),
+        });
+      }
+      if (url.endsWith("/auth/me")) {
+        return jsonResponse({
+          id: "user-1",
+          email: "owner@kiosk.test",
+          username: null,
+          activeBusinessId: null,
+        });
+      }
+      if (url.endsWith("/auth/logout")) {
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`Unhandled: ${url}`);
+    });
+    renderProbe(fetchImpl);
+
+    await waitFor(() => expect(screen.getByTestId("access-token")).toHaveTextContent("token-1"));
+
+    const user = userEvent.setup();
+    await user.click(screen.getByText("logout"));
+
+    await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent("unauthenticated"));
+    expect(screen.getByTestId("access-token")).toHaveTextContent("");
   });
 
   it("authorizedRequest silently refreshes once on a 401 and retries the call", async () => {
