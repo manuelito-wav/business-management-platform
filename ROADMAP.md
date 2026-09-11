@@ -269,7 +269,7 @@ first end-to-end operational slice.
   shortcuts, never a catalog requirement. Use a prominent `Charge` / `Cobrar`
   action that opens a focused payment modal/overlay while the sale remains
   visible behind it; payment methods are not permanently the primary layout.
-  - Commit: `feat: add POS product discovery and cart`
+  - Commit: `feat: add POS product discovery and cart` -- done (356297e)
 - Implement business-specific **Quick Products / Rápidos** configuration for
   selectively surfaced shortcuts such as frequently sold products, cigarettes,
   ice, beverages, current offers, and other local needs. Allow optional images
