@@ -1,8 +1,13 @@
 import { renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { posCacheDatabase } from "../pos-cache/db";
-import type { CachedProduct } from "../pos-cache/types";
-import { findExactIdentifierMatch, useCachedCategories, useCachedProducts } from "./pos-catalog";
+import type { CachedPosConfiguration, CachedProduct } from "../pos-cache/types";
+import {
+  findExactIdentifierMatch,
+  useCachedCategories,
+  useCachedProducts,
+  useQuickProducts,
+} from "./pos-catalog";
 
 const BUSINESS_ID = "pos-catalog-test-biz";
 
@@ -22,9 +27,23 @@ function product(overrides: Partial<CachedProduct>): CachedProduct {
   };
 }
 
+function configuration(overrides: Partial<CachedPosConfiguration>): CachedPosConfiguration {
+  return {
+    businessId: BUSINESS_ID,
+    businessTimezone: "America/Argentina/Buenos_Aires",
+    paymentMethods: {},
+    featureFlags: {},
+    policies: {},
+    registerPolicy: {},
+    quickProducts: { productIds: [] },
+    ...overrides,
+  };
+}
+
 afterEach(async () => {
   await posCacheDatabase.products.where("businessId").equals(BUSINESS_ID).delete();
   await posCacheDatabase.categories.where("businessId").equals(BUSINESS_ID).delete();
+  await posCacheDatabase.posConfiguration.delete(BUSINESS_ID);
 });
 
 describe("findExactIdentifierMatch", () => {
@@ -86,6 +105,53 @@ describe("useCachedProducts", () => {
     const { result } = renderHook(() => useCachedProducts(BUSINESS_ID, { categoryId: "cat-2" }));
 
     await waitFor(() => expect(result.current.map((p) => p.id)).toEqual(["b"]));
+  });
+});
+
+describe("useQuickProducts", () => {
+  it("resolves configured productIds to cached products, preserving configured order", async () => {
+    await posCacheDatabase.products.bulkAdd([
+      product({ id: "a", name: "Coca-Cola 500ml" }),
+      product({ id: "b", name: "Sprite 500ml" }),
+    ]);
+    await posCacheDatabase.posConfiguration.put(
+      configuration({ quickProducts: { productIds: ["b", "a"] } }),
+    );
+
+    const { result } = renderHook(() => useQuickProducts(BUSINESS_ID));
+
+    await waitFor(() => expect(result.current.map((p) => p.id)).toEqual(["b", "a"]));
+  });
+
+  it("silently skips a productId that no longer resolves to a cached product", async () => {
+    await posCacheDatabase.products.bulkAdd([product({ id: "a" })]);
+    await posCacheDatabase.posConfiguration.put(
+      configuration({ quickProducts: { productIds: ["a", "deleted-product"] } }),
+    );
+
+    const { result } = renderHook(() => useQuickProducts(BUSINESS_ID));
+
+    await waitFor(() => expect(result.current.map((p) => p.id)).toEqual(["a"]));
+  });
+
+  it("skips a productId that resolves to a product owned by another business (defensive)", async () => {
+    await posCacheDatabase.products.bulkAdd([
+      product({ id: "a" }),
+      product({ id: "foreign", businessId: "other-biz" }),
+    ]);
+    await posCacheDatabase.posConfiguration.put(
+      configuration({ quickProducts: { productIds: ["a", "foreign"] } }),
+    );
+
+    const { result } = renderHook(() => useQuickProducts(BUSINESS_ID));
+
+    await waitFor(() => expect(result.current.map((p) => p.id)).toEqual(["a"]));
+  });
+
+  it("returns an empty list when no configuration is cached yet", async () => {
+    const { result } = renderHook(() => useQuickProducts(BUSINESS_ID));
+
+    await waitFor(() => expect(result.current).toEqual([]));
   });
 });
 

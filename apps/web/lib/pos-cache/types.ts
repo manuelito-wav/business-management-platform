@@ -40,10 +40,13 @@ export interface CachedCategory {
 }
 
 /**
- * The business's operational configuration, cached whole -- section
+ * The business's operational configuration, cached whole -- most section
  * contents are opaque `Record`s here (no UI reads them yet); the
  * business's own config module (apps/api/src/configuration) remains the
- * single source of truth for each section's real shape.
+ * single source of truth for each section's real shape. `quickProducts`
+ * is the one section the POS discovery panel actually reads offline
+ * (ROADMAP.md "add configurable quick products"), so it gets a real type
+ * here instead of staying opaque.
  */
 export interface CachedPosConfiguration {
   businessId: string;
@@ -52,6 +55,7 @@ export interface CachedPosConfiguration {
   featureFlags: Record<string, unknown>;
   policies: Record<string, unknown>;
   registerPolicy: Record<string, unknown>;
+  quickProducts: { productIds: string[] };
 }
 
 // -- The (partial) API response shapes this module reads off the wire --
@@ -92,4 +96,5 @@ export interface RemoteConfiguration {
   featureFlags: Record<string, unknown>;
   policies: Record<string, unknown>;
   registerPolicy: Record<string, unknown>;
+  quickProducts: { productIds: string[] };
 }

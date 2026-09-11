@@ -15,6 +15,7 @@ import { ConfigurationService } from "./configuration.service";
 import { FEATURE_FLAGS_DEFAULT } from "./sections/feature-flags.config";
 import { PAYMENT_METHODS_DEFAULT } from "./sections/payment-methods.config";
 import { POLICIES_DEFAULT } from "./sections/policies.config";
+import { QUICK_PRODUCTS_DEFAULT } from "./sections/quick-products.config";
 
 const TEST_CORRELATION_ID = "test-correlation-id";
 
@@ -77,6 +78,24 @@ describe("Business configuration registry", () => {
     expect(sections.paymentMethods).toEqual(PAYMENT_METHODS_DEFAULT);
     expect(sections.featureFlags).toEqual(FEATURE_FLAGS_DEFAULT);
     expect(sections.policies).toEqual(POLICIES_DEFAULT);
+    expect(sections.quickProducts).toEqual(QUICK_PRODUCTS_DEFAULT);
+  });
+
+  it("persists an ordered quick products list and returns it on the next read", async () => {
+    const { owner, business } = await createOwner("config-owner2c@kiosk.test");
+
+    const updated = await configuration.updateSections(
+      owner.id,
+      business.id,
+      { quickProducts: { productIds: ["prod-b", "prod-a"] } },
+      TEST_CORRELATION_ID,
+    );
+    // Order is preserved, not sorted -- it is display order (see
+    // QuickProductsConfig's doc comment).
+    expect(updated.quickProducts).toEqual({ productIds: ["prod-b", "prod-a"] });
+
+    const reread = await configuration.getSections(business.id);
+    expect(reread.quickProducts).toEqual({ productIds: ["prod-b", "prod-a"] });
   });
 
   it("persists an update and returns it on the next read", async () => {

@@ -20,6 +20,7 @@ const CONFIGURATION: RemoteConfiguration = {
   featureFlags: { priceLists: false },
   policies: { negativeProfitabilityHandling: "restricted_by_permission" },
   registerPolicy: { requireOpeningAmount: false },
+  quickProducts: { productIds: [] },
 };
 
 function productPage(

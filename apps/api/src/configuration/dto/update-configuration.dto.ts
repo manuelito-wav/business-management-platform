@@ -5,6 +5,7 @@ import { ExpirationPolicyConfig } from "../sections/expiration-policy.config";
 import { FeatureFlagsConfig } from "../sections/feature-flags.config";
 import { PaymentMethodsConfig } from "../sections/payment-methods.config";
 import { PoliciesConfig } from "../sections/policies.config";
+import { QuickProductsConfig } from "../sections/quick-products.config";
 import { RegisterPolicyConfig } from "../sections/register-policy.config";
 
 export class UpdateConfigurationDto {
@@ -37,4 +38,9 @@ export class UpdateConfigurationDto {
   @ValidateNested()
   @Type(() => ExpirationPolicyConfig)
   expirationPolicy?: ExpirationPolicyConfig;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => QuickProductsConfig)
+  quickProducts?: QuickProductsConfig;
 }

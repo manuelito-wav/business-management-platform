@@ -4,8 +4,10 @@ import { useRef, useState, type KeyboardEvent } from "react";
 import { useCartStore } from "../../lib/pos/cart";
 import {
   findExactIdentifierMatch,
+  matchesSearch,
   useCachedCategories,
   useCachedProducts,
+  useQuickProducts,
 } from "../../lib/pos/pos-catalog";
 import type { CachedProduct } from "../../lib/pos-cache/types";
 import { ProductTile } from "./product-tile";
@@ -14,22 +16,37 @@ export interface PosDiscoveryProps {
   businessId: string;
 }
 
+/** "Todas" (the whole catalog), one category, or the curated "Rapidos" shortcut list -- mutually exclusive, same as the pill row's own visual selection. */
+type DiscoveryFilter =
+  { kind: "all" } | { kind: "category"; categoryId: string } | { kind: "quick" };
+
 /**
  * SPECS.md 6.2's "Right Section: Product Discovery" -- keyboard-first
- * search (name/barcode/SKU), category browsing, and the full catalog
- * remains searchable beyond whatever category is selected. Configurable
- * "Quick Products / Rapidos" shortcuts are ROADMAP.md's next checkpoint,
- * not this one -- category browsing already covers "selected visual
- * product groups" (SPECS.md 6.2) in the meantime.
+ * search (name/barcode/SKU), category browsing, configurable "Quick
+ * Products / Rapidos" shortcuts (ROADMAP.md "add configurable quick
+ * products"), and the full catalog remains searchable beyond whatever
+ * filter is selected.
  */
 export function PosDiscovery({ businessId }: PosDiscoveryProps) {
   const [search, setSearch] = useState("");
-  const [categoryId, setCategoryId] = useState<string | null>(null);
+  const [filter, setFilter] = useState<DiscoveryFilter>({ kind: "all" });
   const searchInputRef = useRef<HTMLInputElement>(null);
   const addProduct = useCartStore((state) => state.addProduct);
 
   const categories = useCachedCategories(businessId);
-  const products = useCachedProducts(businessId, { search, categoryId: categoryId ?? undefined });
+  const quickProducts = useQuickProducts(businessId);
+  const catalogProducts = useCachedProducts(businessId, {
+    search,
+    categoryId: filter.kind === "category" ? filter.categoryId : undefined,
+  });
+  // The quick-products shortcut list is small and already resolved client-
+  // side (see useQuickProducts), so its own search narrowing happens here
+  // rather than re-querying Dexie -- same matching rule as the general
+  // catalog search (matchesSearch), just applied to a shorter list.
+  const products =
+    filter.kind === "quick"
+      ? quickProducts.filter((product) => matchesSearch(product, search))
+      : catalogProducts;
 
   const handleSelectProduct = (product: CachedProduct) => {
     // A weighted product needs its weight entered before it contributes
@@ -74,22 +91,35 @@ export function PosDiscovery({ businessId }: PosDiscoveryProps) {
       <div className="flex gap-2 overflow-x-auto border-b border-gray-200 p-3">
         <button
           type="button"
-          onClick={() => setCategoryId(null)}
+          onClick={() => setFilter({ kind: "all" })}
           className={`shrink-0 rounded-full border px-3 py-1 text-sm ${
-            categoryId === null
+            filter.kind === "all"
               ? "border-gray-900 bg-gray-900 text-white"
               : "border-gray-300 text-gray-700"
           }`}
         >
           Todas
         </button>
+        {quickProducts.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setFilter({ kind: "quick" })}
+            className={`shrink-0 rounded-full border px-3 py-1 text-sm ${
+              filter.kind === "quick"
+                ? "border-gray-900 bg-gray-900 text-white"
+                : "border-gray-300 text-gray-700"
+            }`}
+          >
+            Rápidos
+          </button>
+        )}
         {categories.map((category) => (
           <button
             key={category.id}
             type="button"
-            onClick={() => setCategoryId(category.id)}
+            onClick={() => setFilter({ kind: "category", categoryId: category.id })}
             className={`shrink-0 rounded-full border px-3 py-1 text-sm ${
-              categoryId === category.id
+              filter.kind === "category" && filter.categoryId === category.id
                 ? "border-gray-900 bg-gray-900 text-white"
                 : "border-gray-300 text-gray-700"
             }`}

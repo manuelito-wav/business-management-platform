@@ -8,6 +8,7 @@ import type { Product } from "../../lib/catalog/types";
 import { CategoryManagerDialog } from "./category-manager-dialog";
 import { PricingDialog } from "./pricing-dialog";
 import { ProductFormDialog } from "./product-form-dialog";
+import { QuickProductsManagerDialog } from "./quick-products-manager-dialog";
 
 export interface ProductsScreenProps {
   businessId: string;
@@ -19,6 +20,7 @@ export function ProductsScreen({ businessId, initialOpenCreate = false }: Produc
   const { hasPermission } = useBusiness();
   const canManageCatalog = hasPermission("catalog.manage");
   const canManagePricing = hasPermission("pricing.manage");
+  const canManageConfiguration = hasPermission("configuration.manage");
 
   const [search, setSearch] = useState("");
   const [categoryId, setCategoryId] = useState("");
@@ -41,6 +43,7 @@ export function ProductsScreen({ businessId, initialOpenCreate = false }: Produc
   );
 
   const [categoryDialogOpen, setCategoryDialogOpen] = useState(false);
+  const [quickProductsDialogOpen, setQuickProductsDialogOpen] = useState(false);
   const [productDialogOpen, setProductDialogOpen] = useState(initialOpenCreate);
   const [editingProduct, setEditingProduct] = useState<Product | undefined>(undefined);
   const [pricingProduct, setPricingProduct] = useState<Product | null>(null);
@@ -67,6 +70,13 @@ export function ProductsScreen({ businessId, initialOpenCreate = false }: Produc
             className="rounded border border-gray-300 px-3 py-2 text-sm"
           >
             Categorías
+          </button>
+          <button
+            type="button"
+            onClick={() => setQuickProductsDialogOpen(true)}
+            className="rounded border border-gray-300 px-3 py-2 text-sm"
+          >
+            Accesos rápidos
           </button>
           {canManageCatalog && (
             <button
@@ -201,6 +211,12 @@ export function ProductsScreen({ businessId, initialOpenCreate = false }: Produc
         open={categoryDialogOpen}
         onClose={() => setCategoryDialogOpen(false)}
         canManage={canManageCatalog}
+      />
+      <QuickProductsManagerDialog
+        businessId={businessId}
+        open={quickProductsDialogOpen}
+        onClose={() => setQuickProductsDialogOpen(false)}
+        canManage={canManageConfiguration}
       />
       <ProductFormDialog
         businessId={businessId}

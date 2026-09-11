@@ -86,6 +86,9 @@ describe("ProductsScreen", () => {
       if (url.includes("/categories")) {
         return jsonResponse([CATEGORY]);
       }
+      if (url.includes("/configuration")) {
+        return jsonResponse({ quickProducts: { productIds: [] } });
+      }
       if (url.includes("/products")) {
         return jsonResponse({ data: [makeProduct({})], pagination: { nextCursor: null } });
       }
@@ -106,6 +109,9 @@ describe("ProductsScreen", () => {
       const url = String(input);
       if (url.includes("/categories")) {
         return jsonResponse([CATEGORY]);
+      }
+      if (url.includes("/configuration")) {
+        return jsonResponse({ quickProducts: { productIds: [] } });
       }
       if (url.includes("/products")) {
         return jsonResponse({ data: [], pagination: { nextCursor: null } });
@@ -133,6 +139,9 @@ describe("ProductsScreen", () => {
       const url = String(input);
       if (url.includes("/categories")) {
         return jsonResponse([CATEGORY]);
+      }
+      if (url.includes("/configuration")) {
+        return jsonResponse({ quickProducts: { productIds: [] } });
       }
       if (url.includes("/products")) {
         return jsonResponse({ data: [makeProduct({})], pagination: { nextCursor: null } });

@@ -1,6 +1,12 @@
 "use client";
 
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useAuth } from "../auth/session-context";
 import type {
   Category,
@@ -84,6 +90,42 @@ export function useProducts(businessId: string, filter: ProductsFilter, cursor: 
     // flashing to an empty/loading list on every filter or cursor change.
     placeholderData: keepPreviousData,
   });
+}
+
+/** A single product by ID (e.g. resolving a quick-product reference's display name). */
+export function useProduct(businessId: string, productId: string) {
+  const { authorizedRequest } = useAuth();
+  return useQuery({
+    queryKey: ["products", businessId, "byId", productId],
+    queryFn: () => authorizedRequest<Product>(`/businesses/${businessId}/products/${productId}`),
+  });
+}
+
+/**
+ * Resolves several product IDs to full records in parallel (e.g. the
+ * quick-products manager showing the currently-configured shortcuts by
+ * name) -- there is no bulk-by-IDs endpoint on this module's HTTP surface
+ * (ProductsService.findManyByIds is an internal application-service
+ * method other backend modules call directly, not exposed over REST), and
+ * the ordered-IDs list is expected to stay small (QUICK_PRODUCTS_MAX_ITEMS
+ * on the API side), so N parallel single-product requests is the simplest
+ * correct option here. Shares its cache with useProduct via the same
+ * query key. A product that fails to resolve (e.g. since deleted) is
+ * simply omitted, not surfaced as an error -- the same "stale reference,
+ * skip it" handling as the API's own QuickProductsConfig doc comment.
+ */
+export function useProductsByIds(businessId: string, productIds: string[]): Product[] {
+  const { authorizedRequest } = useAuth();
+  const results = useQueries({
+    queries: productIds.map((productId) => ({
+      queryKey: ["products", businessId, "byId", productId],
+      queryFn: () => authorizedRequest<Product>(`/businesses/${businessId}/products/${productId}`),
+      retry: false,
+    })),
+  });
+  return results
+    .map((result) => result.data)
+    .filter((product): product is Product => product !== undefined);
 }
 
 export function useCreateProduct(businessId: string) {

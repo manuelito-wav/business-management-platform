@@ -5,4 +5,5 @@
 export interface BusinessConfiguration {
   businessTimezone: string;
   registerPolicy: { requireOpeningAmount: boolean };
+  quickProducts: { productIds: string[] };
 }

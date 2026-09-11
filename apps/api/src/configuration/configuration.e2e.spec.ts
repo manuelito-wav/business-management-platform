@@ -79,6 +79,7 @@ describe("Business configuration registry (HTTP)", () => {
     expect(response.body.policies).toEqual({
       negativeProfitabilityHandling: "restricted_by_permission",
     });
+    expect(response.body.quickProducts).toEqual({ productIds: [] });
   });
 
   it("rejects reading configuration for a business the caller does not belong to", async () => {
@@ -151,6 +152,32 @@ describe("Business configuration registry (HTTP)", () => {
       .set("Authorization", `Bearer ${ownerToken}`)
       .expect(200);
     expect(unchanged.body.paymentMethods).toEqual({ enabled: ["cash", "qr", "card", "transfer"] });
+  });
+
+  it("updates the quick products list and rejects a non-string entry with a 400", async () => {
+    const ownerToken = await registerAndLogin("config-http-owner7@kiosk.test");
+    const businessId = await createBusiness(ownerToken, "HTTP Config Kiosk 7");
+
+    const updated = await request(app.getHttpServer())
+      .patch(`/businesses/${businessId}/configuration`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ quickProducts: { productIds: ["prod-1", "prod-2"] } })
+      .expect(200);
+    expect(updated.body.quickProducts).toEqual({ productIds: ["prod-1", "prod-2"] });
+
+    const rejected = await request(app.getHttpServer())
+      .patch(`/businesses/${businessId}/configuration`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ quickProducts: { productIds: [42] } })
+      .expect(400);
+    expect(rejected.body.error.code).toBe("VALIDATION_FAILED");
+
+    // The rejected request never partially applied.
+    const unchanged = await request(app.getHttpServer())
+      .get(`/businesses/${businessId}/configuration`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .expect(200);
+    expect(unchanged.body.quickProducts).toEqual({ productIds: ["prod-1", "prod-2"] });
   });
 
   it("rejects an unrecognized timezone with a 400", async () => {
