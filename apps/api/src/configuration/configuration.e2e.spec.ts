@@ -80,6 +80,7 @@ describe("Business configuration registry (HTTP)", () => {
       negativeProfitabilityHandling: "restricted_by_permission",
     });
     expect(response.body.quickProducts).toEqual({ productIds: [] });
+    expect(response.body.salePolicy).toEqual({ abandonmentThresholdMinutes: 240 });
   });
 
   it("rejects reading configuration for a business the caller does not belong to", async () => {

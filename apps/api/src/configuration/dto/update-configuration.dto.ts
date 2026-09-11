@@ -7,6 +7,7 @@ import { PaymentMethodsConfig } from "../sections/payment-methods.config";
 import { PoliciesConfig } from "../sections/policies.config";
 import { QuickProductsConfig } from "../sections/quick-products.config";
 import { RegisterPolicyConfig } from "../sections/register-policy.config";
+import { SalePolicyConfig } from "../sections/sale-policy.config";
 
 export class UpdateConfigurationDto {
   /** D-035: per-business configuration value, not a permanent constant. */
@@ -43,4 +44,9 @@ export class UpdateConfigurationDto {
   @ValidateNested()
   @Type(() => QuickProductsConfig)
   quickProducts?: QuickProductsConfig;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => SalePolicyConfig)
+  salePolicy?: SalePolicyConfig;
 }

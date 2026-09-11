@@ -16,6 +16,7 @@ import { FEATURE_FLAGS_DEFAULT } from "./sections/feature-flags.config";
 import { PAYMENT_METHODS_DEFAULT } from "./sections/payment-methods.config";
 import { POLICIES_DEFAULT } from "./sections/policies.config";
 import { QUICK_PRODUCTS_DEFAULT } from "./sections/quick-products.config";
+import { SALE_POLICY_DEFAULT } from "./sections/sale-policy.config";
 
 const TEST_CORRELATION_ID = "test-correlation-id";
 
@@ -79,6 +80,7 @@ describe("Business configuration registry", () => {
     expect(sections.featureFlags).toEqual(FEATURE_FLAGS_DEFAULT);
     expect(sections.policies).toEqual(POLICIES_DEFAULT);
     expect(sections.quickProducts).toEqual(QUICK_PRODUCTS_DEFAULT);
+    expect(sections.salePolicy).toEqual(SALE_POLICY_DEFAULT);
   });
 
   it("persists an ordered quick products list and returns it on the next read", async () => {

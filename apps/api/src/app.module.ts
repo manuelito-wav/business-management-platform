@@ -12,6 +12,7 @@ import { MembershipsModule } from "./memberships/memberships.module";
 import { PricingModule } from "./pricing/pricing.module";
 import { PrismaModule } from "./prisma/prisma.module";
 import { RegistersModule } from "./registers/registers.module";
+import { SalesModule } from "./sales/sales.module";
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { RegistersModule } from "./registers/registers.module";
     PricingModule,
     RegistersModule,
     InventoryModule,
+    SalesModule,
   ],
 })
 export class AppModule implements NestModule {

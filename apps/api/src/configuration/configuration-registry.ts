@@ -9,6 +9,7 @@ import { PAYMENT_METHODS_DEFAULT, PaymentMethodsConfig } from "./sections/paymen
 import { POLICIES_DEFAULT, PoliciesConfig } from "./sections/policies.config";
 import { QUICK_PRODUCTS_DEFAULT, QuickProductsConfig } from "./sections/quick-products.config";
 import { REGISTER_POLICY_DEFAULT, RegisterPolicyConfig } from "./sections/register-policy.config";
+import { SALE_POLICY_DEFAULT, SalePolicyConfig } from "./sections/sale-policy.config";
 
 export type ConfigurationKey =
   | "paymentMethods"
@@ -16,7 +17,8 @@ export type ConfigurationKey =
   | "policies"
   | "registerPolicy"
   | "expirationPolicy"
-  | "quickProducts";
+  | "quickProducts"
+  | "salePolicy";
 export const CONFIGURATION_KEYS: readonly ConfigurationKey[] = [
   "paymentMethods",
   "featureFlags",
@@ -24,6 +26,7 @@ export const CONFIGURATION_KEYS: readonly ConfigurationKey[] = [
   "registerPolicy",
   "expirationPolicy",
   "quickProducts",
+  "salePolicy",
 ];
 
 export interface ConfigurationSectionDefinition<T extends object> {
@@ -84,6 +87,7 @@ export const CONFIGURATION_REGISTRY = {
   registerPolicy: definePlainSection(RegisterPolicyConfig, REGISTER_POLICY_DEFAULT),
   expirationPolicy: definePlainSection(ExpirationPolicyConfig, EXPIRATION_POLICY_DEFAULT),
   quickProducts: definePlainSection(QuickProductsConfig, QUICK_PRODUCTS_DEFAULT),
+  salePolicy: definePlainSection(SalePolicyConfig, SALE_POLICY_DEFAULT),
 } satisfies Record<ConfigurationKey, ConfigurationSectionDefinition<object>>;
 
 export type ConfigurationSections = {

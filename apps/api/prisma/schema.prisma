@@ -111,6 +111,8 @@ model Business {
   inventoryMovements InventoryMovement[]
   productStocks      ProductStock[]
   expirationBatches  ProductExpirationBatch[]
+  sales              Sale[]
+  saleLines          SaleLine[]
 
   @@map("businesses")
 }
@@ -350,6 +352,7 @@ model Product {
   inventoryMovements InventoryMovement[]
   stock              ProductStock?
   expirationBatches  ProductExpirationBatch[]
+  saleLines          SaleLine[]
 
   @@unique([id, businessId])
   @@index([businessId, name])
@@ -713,4 +716,111 @@ model ProductExpirationBatch {
   // the one query this table exists to serve.
   @@index([businessId, resolvedAt, expiresAt])
   @@map("product_expiration_batches")
+}
+
+// SPECS.md 6.4/14.4, ROADMAP.md "add sale aggregate and state transitions":
+// the immutable sale aggregate. A sale is created already `in_progress`
+// with its first line (SalesService.start) -- `firstItemAt` is set once,
+// at that moment, for the ticket-duration measurement SPECS.md 14.4
+// defines ("first product added to a sale" -> "payment completion") --
+// and moves through explicit, one-way transitions to exactly one terminal
+// status: `completed` (payment satisfied), `cancelled` (an employee
+// abandons it explicitly before completion, SalesService.cancel), or
+// `abandoned` (nobody acted on it -- SalesService.abandon, driven by the
+// business's own configurable salePolicy.abandonmentThresholdMinutes;
+// see that config section's doc comment). D-010: "Unfinished tabs do not
+// create inventory or financial facts" still holds here -- this row
+// alone, before `completed`, carries no payment/cash/inventory effect of
+// its own; those are created only by a later checkpoint's "one
+// transactional complete sale command" (ROADMAP.md "settle sales with
+// stock and cash effects"), which is also what actually calls
+// SalesService.complete as part of its own larger transaction.
+//
+// Deliberately NOT register/session-scoped yet -- the same reasoning
+// InventoryMovement's own doc comment already gives for deferring that
+// field to "Phase 4's sale-settlement checkpoint, the first one that
+// actually needs it": no cash/register effect exists to scope until that
+// checkpoint wires one.
+//
+// `actorUserId` is a plain reference, not a foreign key -- same D-043
+// reasoning as AuditEvent.actorUserId/RegisterSession.userId: this row
+// must outlive the user who rang it up. `total` is the sum of
+// SaleLine.lineTotal, recomputed by SalesService on every line mutation
+// -- never trusted from a client-supplied value.
+enum SaleStatus {
+  in_progress
+  completed
+  cancelled
+  abandoned
+}
+
+model Sale {
+  id          String     @id
+  businessId  String     @map("business_id")
+  actorUserId String     @map("actor_user_id")
+  status      SaleStatus @default(in_progress)
+  total       Int        @default(0)
+
+  firstItemAt DateTime  @map("first_item_at")
+  completedAt DateTime? @map("completed_at")
+  cancelledAt DateTime? @map("cancelled_at")
+  abandonedAt DateTime? @map("abandoned_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  business Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  lines    SaleLine[]
+
+  @@unique([id, businessId])
+  @@index([businessId, status])
+  @@map("sales")
+}
+
+// One immutable line snapshot per product added to a sale (ROADMAP.md
+// "line snapshots (name, unit, quantity, cost/price at sale time)"),
+// captured from the catalog/pricing modules at add-time (SalesService
+// calls ProductsService.findOne, never reads Product/ProductPricing
+// directly -- ARCHITECTURE.md's module-boundary rule) so a later product
+// rename or price change never alters recorded history (the same
+// "snapshot, not a live reference" principle D-034 names for offline sync,
+// applied here for the same reason). `unitCostPrice`/`unitSalePrice`
+// follow saleMode's own basis: per-unit for "unit", per-kilogram for
+// "weighted" (the same documented convention as the POS cart's
+// CartLine.unitPrice) -- `lineTotal` is computed from `unitSalePrice`
+// accordingly (@bmp/domain's roundedIntegerMultiplyDivide for the
+// weighted case), never from a client-supplied total. `productId` uses a
+// real composite FK, the same choice already made for
+// InventoryMovement.productId: products are not physically deleted in
+// normal operation (D-037), so there is no "must outlive a deleted row"
+// concern the way there is for `actorUserId`.
+model SaleLine {
+  id         String @id
+  saleId     String @map("sale_id")
+  businessId String @map("business_id")
+  productId  String @map("product_id")
+
+  name       String
+  saleMode   ProductSaleMode    @map("sale_mode")
+  weightUnit ProductWeightUnit? @map("weight_unit")
+
+  /// Whole units for "unit"; integer grams for "weighted" (D-008), the
+  /// same native inventory unit as InventoryMovement.quantity.
+  quantity Int
+
+  /// Integer ARS minor units (D-005), captured at add-time.
+  unitCostPrice Int @map("unit_cost_price")
+  unitSalePrice Int @map("unit_sale_price")
+  lineTotal     Int @map("line_total")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  sale     Sale     @relation(fields: [saleId, businessId], references: [id, businessId], onDelete: Cascade)
+  // Composite FK, same pattern as InventoryMovement.product.
+  product  Product  @relation(fields: [productId, businessId], references: [id, businessId])
+
+  @@index([saleId])
+  @@index([businessId, productId])
+  @@map("sale_lines")
 }
