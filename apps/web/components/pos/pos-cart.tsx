@@ -1,18 +1,20 @@
 "use client";
 
 import { formatMoney } from "../../lib/catalog/money";
-import { useCartStore } from "../../lib/pos/cart";
+import { useActiveTab, useCartStore } from "../../lib/pos/cart";
 import { computeCartTotal, computeLineTotal } from "../../lib/pos/totals";
 import { WeightedQuantityInput } from "./weighted-quantity-input";
 
 /**
  * SPECS.md 6.2's "Left Section: Current Sale" -- products, quantity
- * controls, individual prices, and the total. Promotions/discounts are
- * intentionally absent: no promotion evaluator exists yet (ROADMAP.md
- * Phase 5), so there is nothing real to show there.
+ * controls, individual prices, and the total, for whichever tab is
+ * currently active (SPECS.md 6.4: multiple sale tabs, PosTabs switches
+ * between them). Promotions/discounts are intentionally absent: no
+ * promotion evaluator exists yet (ROADMAP.md Phase 5), so there is
+ * nothing real to show there.
  */
 export function PosCart() {
-  const lines = useCartStore((state) => state.lines);
+  const { lines } = useActiveTab();
   const setQuantity = useCartStore((state) => state.setQuantity);
   const removeLine = useCartStore((state) => state.removeLine);
   const clear = useCartStore((state) => state.clear);

@@ -1,7 +1,7 @@
 "use client";
 
 import { formatMoney } from "../../lib/catalog/money";
-import { useCartStore } from "../../lib/pos/cart";
+import { useActiveTab } from "../../lib/pos/cart";
 import { computeCartTotal } from "../../lib/pos/totals";
 import { Dialog } from "../ui/dialog";
 
@@ -19,7 +19,7 @@ export interface ChargeModalProps {
  * exist yet.
  */
 export function ChargeModal({ open, onClose }: ChargeModalProps) {
-  const lines = useCartStore((state) => state.lines);
+  const { lines } = useActiveTab();
   const total = computeCartTotal(lines);
 
   return (

@@ -58,6 +58,43 @@ export interface CachedPosConfiguration {
   quickProducts: { productIds: string[] };
 }
 
+/**
+ * A local, in-progress POS sale line/tab snapshot (ROADMAP.md "add
+ * multi-tab POS drafts": "lightweight strategic local draft recovery
+ * using the Phase 2 store"). Lower-durability by design --
+ * ARCHITECTURE.md's Offline section reserves the full durable outbox for
+ * FINALIZED operations to a later Phase 6 checkpoint ("drafts remain
+ * lower-durability by design"); this only needs to survive an accidental
+ * page refresh or crash, not guarantee delivery. Structurally
+ * independent from lib/pos/cart.ts's own CartLine/SaleTab -- same
+ * "deliberately trimmed, not the same as" boundary this file already
+ * draws between CachedProduct and the API's Product -- even though the
+ * shapes happen to match today: pos-cache is a lower-level module and
+ * must never import from a higher-level POS module.
+ */
+export interface CachedDraftLine {
+  productId: string;
+  name: string;
+  saleMode: ProductSaleMode;
+  weightUnit: WeightUnit | null;
+  unitPrice: number | null;
+  quantity: number;
+  imageUrl: string | null;
+}
+
+export interface CachedDraftTab {
+  id: string;
+  label: string;
+  lines: CachedDraftLine[];
+}
+
+export interface CachedPosDraft {
+  businessId: string;
+  tabs: CachedDraftTab[];
+  activeTabId: string;
+  savedAt: Date;
+}
+
 // -- The (partial) API response shapes this module reads off the wire --
 
 export interface RemoteProductIdentifier {

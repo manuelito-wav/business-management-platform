@@ -3,14 +3,15 @@ import { afterEach, describe, expect, it } from "vitest";
 import { PosCacheDatabase } from "./db";
 
 describe("PosCacheDatabase", () => {
-  it("defines the four reference-cache tables at version 1", async () => {
+  it("defines the reference-cache tables plus posDrafts at version 2", async () => {
     const db = new PosCacheDatabase("pos-cache-schema-test");
     await db.open();
 
-    expect(db.verno).toBe(1);
+    expect(db.verno).toBe(2);
     expect(db.tables.map((table) => table.name).sort()).toEqual([
       "categories",
       "posConfiguration",
+      "posDrafts",
       "products",
       "refreshMeta",
     ]);

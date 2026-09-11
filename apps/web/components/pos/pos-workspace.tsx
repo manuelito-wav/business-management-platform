@@ -4,11 +4,12 @@ import { useState } from "react";
 import Link from "next/link";
 import { formatMoney } from "../../lib/catalog/money";
 import { useAuth } from "../../lib/auth/session-context";
-import { useCartStore } from "../../lib/pos/cart";
+import { useActiveTab } from "../../lib/pos/cart";
 import { computeCartTotal } from "../../lib/pos/totals";
 import { ChargeModal } from "./charge-modal";
 import { PosCart } from "./pos-cart";
 import { PosDiscovery } from "./pos-discovery";
+import { PosTabs } from "./pos-tabs";
 
 export interface PosWorkspaceProps {
   businessId: string;
@@ -26,7 +27,7 @@ export interface PosWorkspaceProps {
  */
 export function PosWorkspace({ businessId }: PosWorkspaceProps) {
   const { user, logout } = useAuth();
-  const lines = useCartStore((state) => state.lines);
+  const { lines } = useActiveTab();
   const [chargeOpen, setChargeOpen] = useState(false);
   const total = computeCartTotal(lines);
 
@@ -48,6 +49,7 @@ export function PosWorkspace({ businessId }: PosWorkspaceProps) {
 
       <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
         <section className="flex min-h-0 flex-col border-b border-gray-200 md:border-r md:border-b-0">
+          <PosTabs />
           <PosCart />
           <div className="border-t border-gray-200 p-4">
             <button

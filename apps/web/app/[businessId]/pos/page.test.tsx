@@ -53,19 +53,22 @@ function baseHandlers(input: RequestInfo | URL, businessId = "biz-1"): Response 
 // (see use-refresh-pos-cache.ts), so one test's in-flight refresh can
 // still land after the next test has already started and overwrite its
 // freshly-written cache for the same businessId key.
-const TEST_BUSINESS_IDS = ["biz-1", "biz-quick"];
+const TEST_BUSINESS_IDS = ["biz-1", "biz-quick", "biz-tabs"];
 
 // The cart store is a module-level Zustand singleton (see lib/pos/cart.ts's
-// own doc comment) -- reset it so one test's added lines never bleed into
-// the next (same pattern as cart.test.ts).
+// own doc comment) -- reset it to a business none of these tests use, so
+// each test's own usePosDraft hydration starts genuinely from "loading"
+// instead of reading a previous test's leftover businessId/tabs (same
+// reasoning as use-pos-draft.test.ts's own beforeEach).
 beforeEach(() => {
-  useCartStore.getState().clear();
+  useCartStore.getState().resetForBusiness("__unused_reset_business__");
 });
 
 afterEach(async () => {
   for (const businessId of TEST_BUSINESS_IDS) {
     await posCacheDatabase.products.where("businessId").equals(businessId).delete();
     await posCacheDatabase.categories.where("businessId").equals(businessId).delete();
+    await posCacheDatabase.posDrafts.delete(businessId);
   }
 });
 
@@ -261,5 +264,107 @@ describe("PosPage", () => {
 
     expect(await screen.findByRole("button", { name: /Cola/ })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Sprite/ })).not.toBeInTheDocument();
+  });
+
+  it("keeps multiple sale tabs independent and recovers them as a draft after a reload", async () => {
+    const businessId = "biz-tabs";
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const base = baseHandlers(input, businessId);
+      if (base) {
+        return base;
+      }
+      const url = String(input);
+      if (url.endsWith(`/businesses/${businessId}/register-sessions/mine`)) {
+        return jsonResponse({
+          id: "sess-1",
+          businessId,
+          registerId: "reg-1",
+          userId: "user-1",
+          status: "open",
+          openingAmount: null,
+          openedAt: new Date().toISOString(),
+          closedAt: null,
+        });
+      }
+      if (url.endsWith(`/businesses/${businessId}/categories`)) {
+        return jsonResponse([{ id: "cat-1", businessId, name: "Beverages", status: "active" }]);
+      }
+      if (url.includes(`/businesses/${businessId}/products`)) {
+        return jsonResponse({
+          data: [
+            {
+              id: "prod-1",
+              businessId,
+              categoryId: "cat-1",
+              name: "Cola",
+              saleMode: "unit",
+              weightUnit: null,
+              imageUrl: null,
+              status: "active",
+              identifiers: [],
+              pricing: { salePrice: 10000 },
+            },
+            {
+              id: "prod-2",
+              businessId,
+              categoryId: "cat-1",
+              name: "Sprite",
+              saleMode: "unit",
+              weightUnit: null,
+              imageUrl: null,
+              status: "active",
+              identifiers: [],
+              pricing: { salePrice: 9000 },
+            },
+          ],
+          pagination: { nextCursor: null },
+        });
+      }
+      if (url.endsWith(`/businesses/${businessId}/configuration`)) {
+        return jsonResponse({
+          businessTimezone: "America/Argentina/Buenos_Aires",
+          paymentMethods: {},
+          featureFlags: {},
+          policies: {},
+          registerPolicy: { requireOpeningAmount: false },
+          quickProducts: { productIds: [] },
+        });
+      }
+      throw new Error(`Unhandled: ${url}`);
+    }) as unknown as typeof fetch;
+
+    const user = userEvent.setup();
+    const first = renderPosPage(fetchImpl, businessId);
+
+    // Add Cola to the first tab.
+    await user.type(await screen.findByLabelText("Buscar productos"), "cola");
+    await user.click(await screen.findByRole("button", { name: /Cola/ }));
+
+    // Open a second tab and add Sprite to it instead.
+    await user.click(screen.getByRole("button", { name: "Nueva venta" }));
+    await user.type(screen.getByLabelText("Buscar productos"), "sprite");
+    await user.click(await screen.findByRole("button", { name: /Sprite/ }));
+    expect(await screen.findByRole("button", { name: /Cobrar/ })).toHaveTextContent(/90,00/);
+
+    // Switching back to the first tab shows Cola's total, not Sprite's.
+    await user.click(screen.getByRole("button", { name: /^Venta 1/ }));
+    expect(await screen.findByRole("button", { name: /Cobrar/ })).toHaveTextContent(/100,00/);
+
+    // Unmounting flushes the debounced draft save immediately (see
+    // use-pos-draft.ts) rather than requiring a real wait for the
+    // production debounce window.
+    first.unmount();
+    await waitFor(async () => {
+      const draft = await posCacheDatabase.posDrafts.get(businessId);
+      expect(draft?.tabs).toHaveLength(2);
+    });
+
+    // A fresh mount (simulating a page reload) recovers both tabs, with
+    // "Venta 1" (Cola, $100) still the active one -- that was the last
+    // tab selected before unmounting above.
+    renderPosPage(fetchImpl, businessId);
+    expect(await screen.findByRole("button", { name: /^Venta 1/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /^Venta 2/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Cobrar/ })).toHaveTextContent(/100,00/);
   });
 });
