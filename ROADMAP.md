@@ -253,7 +253,7 @@ for a sale; no financial sale is settled yet.
 - Verify stock projection repair/rebuild and tenant isolation with integration
   tests before any sale can create movements, including that expiration alerts
   alone never create a movement or change stock.
-  - Commit: `test: verify inventory ledger projections`
+  - Commit: `test: verify inventory ledger projections` -- done (2f6801f)
 
 ## Phase 4 -- Core POS, payments, and cash settlement (online MVP slice)
 
