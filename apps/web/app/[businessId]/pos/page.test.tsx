@@ -53,7 +53,7 @@ function baseHandlers(input: RequestInfo | URL, businessId = "biz-1"): Response 
 // (see use-refresh-pos-cache.ts), so one test's in-flight refresh can
 // still land after the next test has already started and overwrite its
 // freshly-written cache for the same businessId key.
-const TEST_BUSINESS_IDS = ["biz-1", "biz-quick", "biz-tabs"];
+const TEST_BUSINESS_IDS = ["biz-1", "biz-quick", "biz-tabs", "biz-conflict"];
 
 // The cart store is a module-level Zustand singleton (see lib/pos/cart.ts's
 // own doc comment) -- reset it to a business none of these tests use, so
@@ -366,5 +366,105 @@ describe("PosPage", () => {
     expect(await screen.findByRole("button", { name: /^Venta 1/ })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /^Venta 2/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Cobrar/ })).toHaveTextContent(/100,00/);
+  });
+
+  it("recovers an unfinished draft after another user force-closes the register session (ROADMAP.md 'cover register conflict and draft recovery', D-045)", async () => {
+    const businessId = "biz-conflict";
+    let sessionState: "open" | "closed" | "reopened" = "open";
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const base = baseHandlers(input, businessId);
+      if (base) {
+        return base;
+      }
+      const url = String(input);
+      if (url.endsWith(`/businesses/${businessId}/register-sessions/mine`)) {
+        if (sessionState === "closed") {
+          // The affected user's own state re-derives from the server on
+          // every load (D-045) -- an override close elsewhere surfaces
+          // here as simply no open session anymore.
+          return jsonResponse(null);
+        }
+        return jsonResponse({
+          id: sessionState === "reopened" ? "sess-2" : "sess-1",
+          businessId,
+          registerId: "reg-1",
+          userId: "user-1",
+          status: "open",
+          openingAmount: null,
+          openedAt: new Date().toISOString(),
+          closedAt: null,
+        });
+      }
+      if (url.endsWith(`/businesses/${businessId}/registers`)) {
+        return jsonResponse([{ id: "reg-1", businessId, name: "Caja 1", status: "active" }]);
+      }
+      if (url.endsWith(`/businesses/${businessId}/categories`)) {
+        return jsonResponse([{ id: "cat-1", businessId, name: "Beverages", status: "active" }]);
+      }
+      if (url.includes(`/businesses/${businessId}/products`)) {
+        return jsonResponse({
+          data: [
+            {
+              id: "prod-1",
+              businessId,
+              categoryId: "cat-1",
+              name: "Cola",
+              saleMode: "unit",
+              weightUnit: null,
+              imageUrl: null,
+              status: "active",
+              identifiers: [],
+              pricing: { salePrice: 10000 },
+            },
+          ],
+          pagination: { nextCursor: null },
+        });
+      }
+      if (url.endsWith(`/businesses/${businessId}/configuration`)) {
+        return jsonResponse({
+          businessTimezone: "America/Argentina/Buenos_Aires",
+          paymentMethods: {},
+          featureFlags: {},
+          policies: {},
+          registerPolicy: { requireOpeningAmount: false },
+          quickProducts: { productIds: [] },
+        });
+      }
+      throw new Error(`Unhandled: ${url}`);
+    }) as unknown as typeof fetch;
+
+    const user = userEvent.setup();
+    const first = renderPosPage(fetchImpl, businessId);
+
+    // Employee A adds Cola to their tab -- an unfinished sale draft.
+    await user.type(await screen.findByLabelText("Buscar productos"), "cola");
+    await user.click(await screen.findByRole("button", { name: /Cola/ }));
+    expect(await screen.findByRole("button", { name: /Cobrar/ })).toHaveTextContent(/100,00/);
+
+    first.unmount();
+    await waitFor(async () => {
+      const draft = await posCacheDatabase.posDrafts.get(businessId);
+      expect(draft?.tabs).toHaveLength(1);
+    });
+
+    // Someone else force-closes the session elsewhere (an authorized
+    // override, per D-045) -- the next load shows the register selector
+    // instead of the workspace, never the draft's contents.
+    sessionState = "closed";
+    const second = renderPosPage(fetchImpl, businessId);
+    expect(await screen.findByText("Elegí una caja")).toBeInTheDocument();
+    second.unmount();
+
+    // The draft itself was never touched: it is purely local, keyed only
+    // by businessId, independent of any register session (see
+    // use-pos-draft.ts's own doc comment) -- not silently lost.
+    const draftAfterClose = await posCacheDatabase.posDrafts.get(businessId);
+    expect(draftAfterClose?.tabs).toHaveLength(1);
+
+    // Establishing a fresh register session, as SPECS.md 11.3 requires,
+    // recovers the workspace with the same unfinished tab intact.
+    sessionState = "reopened";
+    renderPosPage(fetchImpl, businessId);
+    expect(await screen.findByRole("button", { name: /Cobrar/ })).toHaveTextContent(/100,00/);
   });
 });
