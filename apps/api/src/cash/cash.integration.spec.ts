@@ -205,7 +205,7 @@ describe("Register cash movements (SPECS.md 11.4/11.5)", () => {
 
   it("rejects recording a movement against a closed session", async () => {
     const { owner, business, session } = await createOwnerWithOpenSession("cash-owner6");
-    await sessions.close(owner.id, business.id, session.id, TEST_CORRELATION_ID);
+    await sessions.close(owner.id, business.id, session.id, {}, TEST_CORRELATION_ID);
 
     await expect(
       cash.recordMovement(
@@ -227,7 +227,7 @@ describe("Register cash movements (SPECS.md 11.4/11.5)", () => {
       { type: "deposit", amount: 1000, reason: "Refuerzo" },
       TEST_CORRELATION_ID,
     );
-    await sessions.close(owner.id, business.id, session.id, TEST_CORRELATION_ID);
+    await sessions.close(owner.id, business.id, session.id, {}, TEST_CORRELATION_ID);
 
     const list = await cash.list(owner.id, business.id, session.id);
 

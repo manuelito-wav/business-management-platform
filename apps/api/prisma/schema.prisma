@@ -574,6 +574,32 @@ model RegisterSession {
   openedAt DateTime  @default(now()) @map("opened_at")
   closedAt DateTime? @map("closed_at")
 
+  // Set once, at close time (ROADMAP.md "add register closing and
+  // discrepancy handling"; SPECS.md 11.6). closedByUserId is the acting
+  // user who actually closed the session -- almost always equal to
+  // userId (the owner closing their own session), differing only for an
+  // authorized override close (D-045), where someone else force-closes
+  // it via register.override_close_conflict. expectedAmount is
+  // openingAmount plus the net sum of every CashMovement this session
+  // recorded, computed at close time -- the same "sum a session's own
+  // ledger rows" derivation ProductStock already applies to
+  // InventoryMovement, just computed on demand here instead of kept as
+  // a running projection, since it is only ever needed once. countedAmount
+  // is the physically counted drawer total, optional per SPECS.md 11.6
+  // "where used" (see registerPolicy.requireCountedAmount); discrepancy
+  // is countedAmount minus expectedAmount, left null when no count was
+  // taken -- SPECS.md 11.6's "differences should be recorded rather than
+  // silently discarded" is satisfied by persisting it here rather than
+  // only computing it transiently for a response. These live directly on
+  // the session row rather than a separate append-only fact table
+  // because a session closes exactly once and never reopens -- the same
+  // one-time-transition reasoning Sale.total/completedAt already rely on.
+  closedByUserId      String?  @map("closed_by_user_id")
+  expectedAmount      Int?     @map("expected_amount")
+  countedAmount       Int?     @map("counted_amount")
+  discrepancy         Int?     @map("discrepancy")
+  closingObservations String?  @map("closing_observations")
+
   business       Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
   // Composite FK: prevents a session from pointing at a register
   // belonging to a different business, same pattern as Category/Product.

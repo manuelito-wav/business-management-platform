@@ -7,15 +7,19 @@ import { ConfigurationService } from "../configuration/configuration.service";
 import { Prisma } from "../generated/prisma/client";
 import { MembershipsService } from "../memberships/memberships.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { CloseRegisterSessionDto } from "./dto/close-register-session.dto";
 import { OpenRegisterSessionDto } from "./dto/open-register-session.dto";
 import { RegistersService } from "./registers.service";
 
 /**
- * The operational open/close side of a register (SPECS.md 11.1/11.2,
- * D-009) -- see schema.prisma's RegisterSession doc comment for the
- * "at most one open session per register" and "only the session's own
- * user may close it" invariants, and why the multi-user conflict/
- * override scenario (SPECS.md 11.3) is intentionally out of scope here.
+ * The operational open/close side of a register (SPECS.md 11.1/11.2/
+ * 11.3/11.6, D-009, D-045) -- see schema.prisma's RegisterSession doc
+ * comment for the "at most one open session per register" invariant and
+ * the close-time expected/counted/discrepancy fields. Closing is
+ * normally restricted to the session's own user; the multi-user
+ * conflict/override scenario (SPECS.md 11.3) is handled by close()
+ * itself allowing a holder of register.override_close_conflict to
+ * force-close someone else's session, per D-045.
  */
 @Injectable()
 export class RegisterSessionsService {
@@ -94,16 +98,35 @@ export class RegisterSessionsService {
     }
   }
 
-  async close(actingUserId: string, businessId: string, sessionId: string, correlationId: string) {
-    await this.memberships.requireActiveMembership(actingUserId, businessId);
+  async close(
+    actingUserId: string,
+    businessId: string,
+    sessionId: string,
+    dto: CloseRegisterSessionDto,
+    correlationId: string,
+  ) {
+    const membership = await this.memberships.requireActiveMembership(actingUserId, businessId);
     const session = await this.requireInBusiness(businessId, sessionId);
 
-    if (session.userId !== actingUserId) {
-      throw new AppException(
-        "REGISTER_SESSION_NOT_OWNED",
-        "Only the user who opened this session can close it.",
-        HttpStatus.FORBIDDEN,
+    const isOwnSession = session.userId === actingUserId;
+    if (!isOwnSession) {
+      // SPECS.md 11.3's multi-user conflict: closing someone else's
+      // active session is allowed only for a holder of
+      // register.override_close_conflict, with no extra confirmation
+      // step beyond the permission check itself (D-045). Preserves the
+      // plain REGISTER_SESSION_NOT_OWNED error for everyone else, rather
+      // than a generic permission-denied message, since "you don't own
+      // this session" remains the accurate reason for the common case.
+      const canOverride = membership.role.rolePermissions.some(
+        (rolePermission) => rolePermission.permissionCode === "register.override_close_conflict",
       );
+      if (!canOverride) {
+        throw new AppException(
+          "REGISTER_SESSION_NOT_OWNED",
+          "Only the user who opened this session can close it.",
+          HttpStatus.FORBIDDEN,
+        );
+      }
     }
     if (session.status !== "open") {
       throw new AppException(
@@ -113,19 +136,55 @@ export class RegisterSessionsService {
       );
     }
 
+    const { registerPolicy } = await this.configuration.getSections(businessId);
+    if (registerPolicy.requireCountedAmount && dto.countedAmount === undefined) {
+      throw new AppException(
+        "REGISTER_SESSION_COUNTED_AMOUNT_REQUIRED",
+        "This business requires a counted amount to close a register session.",
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
     return this.prisma.$transaction(async (tx) => {
+      // Expected drawer total: opening float plus the net effect of
+      // every cash movement this session recorded (deposits/sale
+      // settlements in, withdrawals/expenses/etc. out -- CashService
+      // already signs `amount` by type, so a plain sum is enough).
+      const movements = await tx.cashMovement.aggregate({
+        where: { registerSessionId: sessionId },
+        _sum: { amount: true },
+      });
+      const expectedAmount = (session.openingAmount ?? 0) + (movements._sum.amount ?? 0);
+      const countedAmount = dto.countedAmount ?? null;
+      const discrepancy = countedAmount === null ? null : countedAmount - expectedAmount;
+
       const updated = await tx.registerSession.update({
         where: { id: sessionId },
-        data: { status: "closed", closedAt: this.clock.now(), activeRegisterId: null },
+        data: {
+          status: "closed",
+          closedAt: this.clock.now(),
+          activeRegisterId: null,
+          closedByUserId: actingUserId,
+          expectedAmount,
+          countedAmount,
+          discrepancy,
+          closingObservations: dto.observations ?? null,
+        },
       });
       await this.audit.record(tx, {
         businessId,
         actorUserId: actingUserId,
-        action: "register_session.closed",
+        action: isOwnSession ? "register_session.closed" : "register_session.closed_override",
         targetType: "register_session",
         targetId: sessionId,
         before: { status: "open" },
-        after: { status: "closed" },
+        after: {
+          status: "closed",
+          expectedAmount,
+          countedAmount,
+          discrepancy,
+          sessionOwnerUserId: session.userId,
+        },
         correlationId,
       });
       return updated;
