@@ -299,7 +299,7 @@ first end-to-end operational slice.
   sale, payments, sale inventory movements, cash effect for cash payments,
   audit record, and outbox event. Return the same result on an operation-ID
   retry. No print, PDF, or provider call may sit in this transaction.
-  - Commit: `feat: settle sales with stock and cash effects`
+  - Commit: `feat: settle sales with stock and cash effects` -- done (22750a2)
 - Implement expected-versus-counted register close, discrepancy recording,
   policy-driven conflict warning/authorized override, notification trigger, and
   re-establishment requirement for affected users. Until the formal
