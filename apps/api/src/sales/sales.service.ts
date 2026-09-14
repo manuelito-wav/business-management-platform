@@ -9,13 +9,19 @@ import {
 import { AuditService } from "../audit/audit.service";
 import { AppException } from "../common/app-exception";
 import { CLOCK, ID_GENERATOR } from "../common/domain-providers";
+import { CashService } from "../cash/cash.service";
 import { ProductsService } from "../catalog/products.service";
 import { ConfigurationService } from "../configuration/configuration.service";
 import { Prisma, ProductSaleMode, Sale, SaleStatus } from "../generated/prisma/client";
+import { InventoryService } from "../inventory/inventory.service";
 import { MembershipsService } from "../memberships/memberships.service";
+import { OutboxService } from "../outbox/outbox.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { RegisterSessionsService } from "../registers/register-sessions.service";
 import { AddPaymentDto } from "./dto/add-payment.dto";
 import { SaleLineInputDto } from "./dto/sale-line-input.dto";
+import { SettleSaleDto } from "./dto/settle-sale.dto";
+import { StartSaleDto } from "./dto/start-sale.dto";
 
 type SaleClient = PrismaService | Prisma.TransactionClient;
 
@@ -61,22 +67,22 @@ function isSelfVerifyingMethod(method: AddPaymentDto["method"]): boolean {
 }
 
 /**
- * The immutable sale aggregate and its explicit state transitions
- * (ROADMAP.md "add sale aggregate and state transitions" / "add split
- * payment settlement") -- see schema.prisma's Sale/SaleLine/Payment doc
- * comments for the full status/field reasoning. Not yet wired to the
- * live POS UI: lib/pos/cart.ts's tabs stay entirely client-side through
- * this checkpoint (D-010, and the "add multi-tab POS drafts" checkpoint's
- * own explicit design). `start`/`addLine`/`updateLineQuantity`/
- * `removeLine`/`cancel`/`addPayment`/`removePayment`/`verifyPayment` are
- * complete, self-contained operations (each opens its own transaction)
- * usable as soon as a caller exists; `complete` is deliberately narrower
- * -- composable into an existing transaction client, since ROADMAP.md's
- * later "settle sales with stock and cash effects" checkpoint needs to
- * call it as one step inside its own single atomic "complete sale"
- * transaction (the inventory/cash effects themselves belong to that
- * checkpoint, not here -- payment *validation* is this checkpoint's own
- * job and already runs inside `complete` below).
+ * The immutable sale aggregate, its explicit state transitions, and its
+ * final settlement (ROADMAP.md "add sale aggregate and state
+ * transitions" / "add split payment settlement" / "settle sales with
+ * stock and cash effects") -- see schema.prisma's Sale/SaleLine/Payment
+ * doc comments for the full status/field reasoning. Not yet wired to the
+ * live POS UI: lib/pos/cart.ts's tabs stay entirely client-side (D-010,
+ * and the "add multi-tab POS drafts" checkpoint's own explicit design).
+ * `start`/`addLine`/`updateLineQuantity`/`removeLine`/`cancel`/
+ * `addPayment`/`removePayment`/`verifyPayment` are complete, self-
+ * contained operations (each opens its own transaction); `complete` is
+ * deliberately narrower -- composable into an existing transaction
+ * client -- and `settle` is what actually calls it: the one
+ * transactional command ARCHITECTURE.md's "Financial settlement"
+ * describes, coordinating across modules that each own their own facts
+ * (inventory movements, the cash ledger, audit, outbox) without ever
+ * writing into another module's tables directly.
  */
 @Injectable()
 export class SalesService {
@@ -85,18 +91,18 @@ export class SalesService {
     private readonly memberships: MembershipsService,
     private readonly products: ProductsService,
     private readonly configuration: ConfigurationService,
+    private readonly registerSessions: RegisterSessionsService,
+    private readonly inventory: InventoryService,
+    private readonly cash: CashService,
+    private readonly outbox: OutboxService,
     private readonly audit: AuditService,
     @Inject(ID_GENERATOR) private readonly ids: IdGenerator,
     @Inject(CLOCK) private readonly clock: Clock,
   ) {}
 
-  async start(
-    actingUserId: string,
-    businessId: string,
-    dto: SaleLineInputDto,
-    correlationId: string,
-  ) {
+  async start(actingUserId: string, businessId: string, dto: StartSaleDto, correlationId: string) {
     await this.memberships.requirePermission(actingUserId, businessId, "sales.create");
+    await this.registerSessions.requireOpenSession(businessId, dto.registerSessionId);
     const product = await this.requirePricedProduct(actingUserId, businessId, dto.productId);
     const lineTotal = computeLineTotal(product.saleMode, product.pricing.salePrice, dto.quantity);
     const now = this.clock.now();
@@ -106,6 +112,7 @@ export class SalesService {
         data: {
           id: this.ids.generate(),
           businessId,
+          registerSessionId: dto.registerSessionId,
           actorUserId: actingUserId,
           status: "in_progress",
           total: lineTotal,
@@ -424,16 +431,17 @@ export class SalesService {
   }
 
   /**
-   * The `in_progress` -> `completed` transition -- validates the
+   * The `in_progress` -> `completed` transition only -- validates the
    * aggregate's own invariants (must still be in progress, must have at
    * least one line, and its payment allocation must satisfy the total --
    * SPECS.md 6.6: "The sale can only complete when the required amount is
    * satisfied") and records the resulting `changeDue`. Takes the
-   * caller's transaction client rather than opening its own: ROADMAP.md's
-   * later "settle sales with stock and cash effects" checkpoint is what
-   * actually calls this, as one step inside its own single atomic
-   * "complete sale" command (the inventory/cash effects and their own
-   * audit record are that checkpoint's responsibility, not this method's).
+   * caller's transaction client rather than opening its own: `settle`
+   * below is what actually calls this, as one step inside its own single
+   * atomic "complete sale" command -- the inventory/cash effects and the
+   * completion's own audit record are `settle`'s responsibility, not
+   * this method's, so this stays a pure, narrow state transition reusable
+   * on its own (e.g. by tests exercising the transition in isolation).
    */
   async complete(tx: Prisma.TransactionClient, businessId: string, saleId: string): Promise<Sale> {
     const sale = await tx.sale.findUnique({ where: { id: saleId } });
@@ -520,6 +528,122 @@ export class SalesService {
         correlationId,
       });
       return updated;
+    });
+  }
+
+  /**
+   * ROADMAP.md "settle sales with stock and cash effects": the one
+   * transactional command that completes a sale for real. Calls
+   * `complete` (validates + transitions status, resolves changeDue) as
+   * its first step, then -- still inside the very same transaction --
+   * writes a "sale" inventory movement per line (InventoryService.
+   * recordMovement, negative: a sale decreases stock), a single net
+   * "sale_settlement" cash movement for whatever portion of the total
+   * cash actually covered (CashService.record -- skipped entirely when
+   * cash covered none of it, since nothing physically entered the
+   * drawer), the outbox event, and this command's own audit record.
+   * ARCHITECTURE.md "Financial settlement": each module recorded its own
+   * fact through its own application-service method; this method never
+   * writes into inventory/cash/outbox's own tables directly. No print,
+   * PDF, or provider call runs here (none exist yet, and none belongs
+   * inside this transaction regardless -- ROADMAP.md's own explicit
+   * constraint).
+   *
+   * Idempotent under an operation-ID retry (ARCHITECTURE.md "Command
+   * envelope"): if `dto.operationId` was already used to settle this
+   * exact sale, the prior result is returned unchanged rather than
+   * re-executing (which would otherwise fail -- the sale is no longer
+   * in_progress -- or, far worse, double-settle it). Reusing the same
+   * operationId for a genuinely different sale is rejected outright
+   * rather than silently returning the wrong sale's data.
+   */
+  async settle(
+    actingUserId: string,
+    businessId: string,
+    saleId: string,
+    dto: SettleSaleDto,
+    correlationId: string,
+  ) {
+    await this.memberships.requirePermission(actingUserId, businessId, "sales.create");
+
+    const alreadySettled = await this.prisma.sale.findFirst({
+      where: { businessId, operationId: dto.operationId },
+    });
+    if (alreadySettled) {
+      if (alreadySettled.id !== saleId) {
+        throw new AppException(
+          "SALE_OPERATION_ID_REUSED",
+          "This operationId was already used to settle a different sale.",
+          HttpStatus.CONFLICT,
+        );
+      }
+      return this.loadSaleDetail(this.prisma, businessId, alreadySettled.id);
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const completed = await this.complete(tx, businessId, saleId);
+      await tx.sale.update({ where: { id: saleId }, data: { operationId: dto.operationId } });
+
+      const lines = await tx.saleLine.findMany({ where: { saleId } });
+      for (const line of lines) {
+        await this.inventory.recordMovement(tx, {
+          businessId,
+          productId: line.productId,
+          reason: "sale",
+          quantity: -line.quantity,
+          actorUserId: actingUserId,
+          correlationId,
+          sourceOperationId: saleId,
+        });
+      }
+
+      const payments = await tx.payment.findMany({ where: { saleId } });
+      const nonCashTotal = payments
+        .filter((payment) => payment.method !== "cash")
+        .reduce((sum, payment) => sum + payment.amount, 0);
+      // The portion of the total cash actually needed to cover -- not the
+      // raw amount tendered, which may include change that never really
+      // stays in the drawer (@bmp/domain's resolvePaymentAllocation is
+      // the same rule that already validated this in `complete`).
+      const cashPortionOfTotal = completed.total - nonCashTotal;
+      if (cashPortionOfTotal > 0) {
+        await this.cash.record(tx, {
+          businessId,
+          registerSessionId: completed.registerSessionId,
+          actorUserId: actingUserId,
+          type: "sale_settlement",
+          amount: cashPortionOfTotal,
+          reason: `Cobro de venta ${saleId}`,
+          correlationId,
+        });
+      }
+
+      await this.outbox.record(tx, {
+        businessId,
+        eventType: "sale.completed",
+        targetType: "sale",
+        targetId: saleId,
+        payload: {
+          saleId,
+          registerSessionId: completed.registerSessionId,
+          actorUserId: actingUserId,
+          total: completed.total,
+          changeDue: completed.changeDue,
+        },
+        correlationId,
+      });
+
+      await this.audit.record(tx, {
+        businessId,
+        actorUserId: actingUserId,
+        action: "sale.completed",
+        targetType: "sale",
+        targetId: saleId,
+        after: { total: completed.total, changeDue: completed.changeDue },
+        correlationId,
+      });
+
+      return this.loadSaleDetail(tx, businessId, saleId);
     });
   }
 

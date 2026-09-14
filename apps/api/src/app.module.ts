@@ -10,6 +10,7 @@ import { HealthModule } from "./health/health.module";
 import { IdentityModule } from "./identity/identity.module";
 import { InventoryModule } from "./inventory/inventory.module";
 import { MembershipsModule } from "./memberships/memberships.module";
+import { OutboxModule } from "./outbox/outbox.module";
 import { PricingModule } from "./pricing/pricing.module";
 import { PrismaModule } from "./prisma/prisma.module";
 import { RegistersModule } from "./registers/registers.module";
@@ -29,6 +30,7 @@ import { SalesModule } from "./sales/sales.module";
     PricingModule,
     RegistersModule,
     InventoryModule,
+    OutboxModule,
     SalesModule,
     CashModule,
   ],

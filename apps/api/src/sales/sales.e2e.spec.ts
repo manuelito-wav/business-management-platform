@@ -34,9 +34,18 @@ describe("Sale aggregate (HTTP)", () => {
   });
 
   beforeEach(async () => {
+    // outboxEvent has no restricting FK, but cashMovement/sale both
+    // restrict-reference registerSession -- clear them first (the same
+    // lesson as the earlier sale/product cleanup-ordering fix).
+    await prisma.outboxEvent.deleteMany();
+    await prisma.inventoryMovement.deleteMany();
+    await prisma.productStock.deleteMany();
+    await prisma.cashMovement.deleteMany();
     await prisma.payment.deleteMany();
     await prisma.saleLine.deleteMany();
     await prisma.sale.deleteMany();
+    await prisma.registerSession.deleteMany();
+    await prisma.register.deleteMany();
     await prisma.productPricing.deleteMany();
     await prisma.productIdentifier.deleteMany();
     await prisma.product.deleteMany();
@@ -90,12 +99,24 @@ describe("Sale aggregate (HTTP)", () => {
       .send({ costPrice: 5000, salePrice: 10000 })
       .expect(200);
 
-    return { businessId, productId };
+    const register = await request(app.getHttpServer())
+      .post(`/businesses/${businessId}/registers`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ name: "Register 1" })
+      .expect(201);
+
+    const session = await request(app.getHttpServer())
+      .post(`/businesses/${businessId}/registers/${register.body.id}/sessions`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({})
+      .expect(201);
+
+    return { businessId, productId, sessionId: session.body.id as string };
   }
 
   it("starts a sale, reads it, adds/updates/removes a line, and cancels it", async () => {
     const ownerToken = await registerAndLogin("sale-http-owner1@kiosk.test");
-    const { businessId, productId } = await setUpBusinessWithPricedProduct(
+    const { businessId, productId, sessionId } = await setUpBusinessWithPricedProduct(
       ownerToken,
       "Sales HTTP Kiosk 1",
     );
@@ -103,7 +124,7 @@ describe("Sale aggregate (HTTP)", () => {
     const started = await request(app.getHttpServer())
       .post(`/businesses/${businessId}/sales`)
       .set("Authorization", `Bearer ${ownerToken}`)
-      .send({ productId, quantity: 2 })
+      .send({ registerSessionId: sessionId, productId, quantity: 2 })
       .expect(201);
     const saleId = started.body.id as string;
     expect(started.body.status).toBe("in_progress");
@@ -168,14 +189,14 @@ describe("Sale aggregate (HTTP)", () => {
 
   it("splits a payment across cash and card, verifies a qr payment, and removes a payment", async () => {
     const ownerToken = await registerAndLogin("sale-http-owner6@kiosk.test");
-    const { businessId, productId } = await setUpBusinessWithPricedProduct(
+    const { businessId, productId, sessionId } = await setUpBusinessWithPricedProduct(
       ownerToken,
       "Sales HTTP Kiosk 6",
     );
     const started = await request(app.getHttpServer())
       .post(`/businesses/${businessId}/sales`)
       .set("Authorization", `Bearer ${ownerToken}`)
-      .send({ productId, quantity: 1 })
+      .send({ registerSessionId: sessionId, productId, quantity: 1 })
       .expect(201);
     const saleId = started.body.id as string;
     expect(started.body.total).toBe(10000);
@@ -227,14 +248,14 @@ describe("Sale aggregate (HTTP)", () => {
 
   it("rejects a card payment that alone would exceed the sale's total, with a 409", async () => {
     const ownerToken = await registerAndLogin("sale-http-owner7@kiosk.test");
-    const { businessId, productId } = await setUpBusinessWithPricedProduct(
+    const { businessId, productId, sessionId } = await setUpBusinessWithPricedProduct(
       ownerToken,
       "Sales HTTP Kiosk 7",
     );
     const started = await request(app.getHttpServer())
       .post(`/businesses/${businessId}/sales`)
       .set("Authorization", `Bearer ${ownerToken}`)
-      .send({ productId, quantity: 1 })
+      .send({ registerSessionId: sessionId, productId, quantity: 1 })
       .expect(201);
 
     const rejected = await request(app.getHttpServer())
@@ -247,7 +268,7 @@ describe("Sale aggregate (HTTP)", () => {
 
   it("rejects a non-positive quantity with a 400", async () => {
     const ownerToken = await registerAndLogin("sale-http-owner2@kiosk.test");
-    const { businessId, productId } = await setUpBusinessWithPricedProduct(
+    const { businessId, productId, sessionId } = await setUpBusinessWithPricedProduct(
       ownerToken,
       "Sales HTTP Kiosk 2",
     );
@@ -255,7 +276,7 @@ describe("Sale aggregate (HTTP)", () => {
     await request(app.getHttpServer())
       .post(`/businesses/${businessId}/sales`)
       .set("Authorization", `Bearer ${ownerToken}`)
-      .send({ productId, quantity: 0 })
+      .send({ registerSessionId: sessionId, productId, quantity: 0 })
       .expect(400);
   });
 
@@ -277,25 +298,35 @@ describe("Sale aggregate (HTTP)", () => {
       .set("Authorization", `Bearer ${ownerToken}`)
       .send({ name: "Sin precio", categoryId: category.body.id })
       .expect(201);
+    const register = await request(app.getHttpServer())
+      .post(`/businesses/${businessId}/registers`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ name: "Register 1" })
+      .expect(201);
+    const session = await request(app.getHttpServer())
+      .post(`/businesses/${businessId}/registers/${register.body.id}/sessions`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({})
+      .expect(201);
 
     const response = await request(app.getHttpServer())
       .post(`/businesses/${businessId}/sales`)
       .set("Authorization", `Bearer ${ownerToken}`)
-      .send({ productId: product.body.id, quantity: 1 })
+      .send({ registerSessionId: session.body.id, productId: product.body.id, quantity: 1 })
       .expect(409);
     expect(response.body.error.code).toBe("SALE_PRODUCT_HAS_NO_PRICING");
   });
 
   it("rejects an Employee cancelling a sale (sales.cancel not granted by default) with a 403", async () => {
     const ownerToken = await registerAndLogin("sale-http-owner4@kiosk.test");
-    const { businessId, productId } = await setUpBusinessWithPricedProduct(
+    const { businessId, productId, sessionId } = await setUpBusinessWithPricedProduct(
       ownerToken,
       "Sales HTTP Kiosk 4",
     );
     const started = await request(app.getHttpServer())
       .post(`/businesses/${businessId}/sales`)
       .set("Authorization", `Bearer ${ownerToken}`)
-      .send({ productId, quantity: 1 })
+      .send({ registerSessionId: sessionId, productId, quantity: 1 })
       .expect(201);
 
     const roles = await request(app.getHttpServer())
@@ -324,14 +355,14 @@ describe("Sale aggregate (HTTP)", () => {
 
   it("rejects reading a sale for a business the caller does not belong to, with a 403", async () => {
     const ownerToken = await registerAndLogin("sale-http-owner5@kiosk.test");
-    const { businessId, productId } = await setUpBusinessWithPricedProduct(
+    const { businessId, productId, sessionId } = await setUpBusinessWithPricedProduct(
       ownerToken,
       "Sales HTTP Kiosk 5",
     );
     const started = await request(app.getHttpServer())
       .post(`/businesses/${businessId}/sales`)
       .set("Authorization", `Bearer ${ownerToken}`)
-      .send({ productId, quantity: 1 })
+      .send({ registerSessionId: sessionId, productId, quantity: 1 })
       .expect(201);
     const strangerToken = await registerAndLogin("sale-http-stranger5@kiosk.test");
 
@@ -339,6 +370,81 @@ describe("Sale aggregate (HTTP)", () => {
       .get(`/businesses/${businessId}/sales/${started.body.id}`)
       .set("Authorization", `Bearer ${strangerToken}`)
       .expect(403);
+  });
+
+  it("completes a cash sale end to end: inventory movement, cash effect, and an idempotent retry", async () => {
+    const ownerToken = await registerAndLogin("sale-http-owner8@kiosk.test");
+    const { businessId, productId, sessionId } = await setUpBusinessWithPricedProduct(
+      ownerToken,
+      "Sales HTTP Kiosk 8",
+    );
+    const started = await request(app.getHttpServer())
+      .post(`/businesses/${businessId}/sales`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ registerSessionId: sessionId, productId, quantity: 2 })
+      .expect(201);
+    const saleId = started.body.id as string;
+    await request(app.getHttpServer())
+      .post(`/businesses/${businessId}/sales/${saleId}/payments`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ method: "cash", amount: 20500 })
+      .expect(201);
+
+    const operationId = "op-http-8-1";
+    const completed = await request(app.getHttpServer())
+      .post(`/businesses/${businessId}/sales/${saleId}/complete`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ operationId })
+      .expect(200);
+    expect(completed.body.status).toBe("completed");
+    expect(completed.body.changeDue).toBe(500);
+
+    const stock = await request(app.getHttpServer())
+      .get(`/businesses/${businessId}/products/${productId}/stock`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .expect(200);
+    expect(stock.body.quantityOnHand).toBe(-2);
+
+    const cashMovements = await request(app.getHttpServer())
+      .get(`/businesses/${businessId}/register-sessions/${sessionId}/cash-movements`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .expect(200);
+    expect(cashMovements.body).toHaveLength(1);
+    expect(cashMovements.body[0]).toMatchObject({ type: "sale_settlement", amount: 20000 });
+
+    // Idempotent retry -- same operationId, exact same result, not a 409.
+    const retried = await request(app.getHttpServer())
+      .post(`/businesses/${businessId}/sales/${saleId}/complete`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ operationId })
+      .expect(200);
+    expect(retried.body).toEqual(completed.body);
+
+    const cashMovementsAfterRetry = await request(app.getHttpServer())
+      .get(`/businesses/${businessId}/register-sessions/${sessionId}/cash-movements`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .expect(200);
+    expect(cashMovementsAfterRetry.body).toHaveLength(1);
+  });
+
+  it("rejects completing a sale whose payment allocation is not yet satisfied, with a 409", async () => {
+    const ownerToken = await registerAndLogin("sale-http-owner9@kiosk.test");
+    const { businessId, productId, sessionId } = await setUpBusinessWithPricedProduct(
+      ownerToken,
+      "Sales HTTP Kiosk 9",
+    );
+    const started = await request(app.getHttpServer())
+      .post(`/businesses/${businessId}/sales`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ registerSessionId: sessionId, productId, quantity: 1 })
+      .expect(201);
+
+    const response = await request(app.getHttpServer())
+      .post(`/businesses/${businessId}/sales/${started.body.id}/complete`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ operationId: "op-http-9-1" })
+      .expect(409);
+    expect(response.body.error.code).toBe("SALE_PAYMENT_NOT_SATISFIED");
   });
 
   it("rejects an unauthenticated request with a 401", async () => {

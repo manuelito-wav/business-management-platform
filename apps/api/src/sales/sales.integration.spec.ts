@@ -5,18 +5,23 @@ import { Test } from "@nestjs/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { AuditService } from "../audit/audit.service";
 import { BusinessesService } from "../businesses/businesses.service";
+import { CashService } from "../cash/cash.service";
 import { CategoriesService } from "../catalog/categories.service";
 import { ProductsService } from "../catalog/products.service";
 import { CLOCK, ID_GENERATOR } from "../common/domain-providers";
 import { ConfigurationService } from "../configuration/configuration.service";
 import { PasswordHasherService } from "../identity/password-hasher.service";
 import { UsersService } from "../identity/users.service";
+import { InventoryService } from "../inventory/inventory.service";
 import { MembershipsService } from "../memberships/memberships.service";
 import { PermissionsService } from "../memberships/permissions.service";
 import { RolesService } from "../memberships/roles.service";
+import { OutboxService } from "../outbox/outbox.service";
 import { PricingService } from "../pricing/pricing.service";
 import { PrismaModule } from "../prisma/prisma.module";
 import { PrismaService } from "../prisma/prisma.service";
+import { RegisterSessionsService } from "../registers/register-sessions.service";
+import { RegistersService } from "../registers/registers.service";
 import { isSaleAbandoned, SalesService } from "./sales.service";
 
 const TEST_CORRELATION_ID = "test-correlation-id";
@@ -30,6 +35,8 @@ describe("Sale aggregate and state transitions", () => {
   let products: ProductsService;
   let pricing: PricingService;
   let configuration: ConfigurationService;
+  let registers: RegistersService;
+  let registerSessions: RegisterSessionsService;
   let sales: SalesService;
   let testContext: TestContext;
 
@@ -55,6 +62,11 @@ describe("Sale aggregate and state transitions", () => {
         ProductsService,
         PricingService,
         ConfigurationService,
+        RegistersService,
+        RegisterSessionsService,
+        InventoryService,
+        CashService,
+        OutboxService,
         SalesService,
       ],
     }).compile();
@@ -67,6 +79,8 @@ describe("Sale aggregate and state transitions", () => {
     products = moduleRef.get(ProductsService);
     pricing = moduleRef.get(PricingService);
     configuration = moduleRef.get(ConfigurationService);
+    registers = moduleRef.get(RegistersService);
+    registerSessions = moduleRef.get(RegisterSessionsService);
     sales = moduleRef.get(SalesService);
     await prisma.$connect();
   });
@@ -77,9 +91,18 @@ describe("Sale aggregate and state transitions", () => {
 
   beforeEach(async () => {
     testContext.clock.set(new Date("2026-06-01T00:00:00.000Z"));
+    // outboxEvent has no restricting FK, but cashMovement/sale both
+    // restrict-reference registerSession -- clear them first (the same
+    // lesson as the earlier sale/product cleanup-ordering fix).
+    await prisma.outboxEvent.deleteMany();
+    await prisma.inventoryMovement.deleteMany();
+    await prisma.productStock.deleteMany();
+    await prisma.cashMovement.deleteMany();
     await prisma.payment.deleteMany();
     await prisma.saleLine.deleteMany();
     await prisma.sale.deleteMany();
+    await prisma.registerSession.deleteMany();
+    await prisma.register.deleteMany();
     await prisma.productPricing.deleteMany();
     await prisma.productIdentifier.deleteMany();
     await prisma.product.deleteMany();
@@ -116,16 +139,29 @@ describe("Sale aggregate and state transitions", () => {
       { costPrice: 5000, salePrice: 10000 },
       TEST_CORRELATION_ID,
     );
-    return { owner, business, product };
+    const register = await registers.create(
+      owner.id,
+      business.id,
+      { name: "Register 1" },
+      TEST_CORRELATION_ID,
+    );
+    const session = await registerSessions.open(
+      owner.id,
+      business.id,
+      register.id,
+      {},
+      TEST_CORRELATION_ID,
+    );
+    return { owner, business, product, session };
   }
 
   it("start creates an in_progress sale with one line, the right total, and firstItemAt set to now", async () => {
-    const { owner, business, product } = await createOwnerWithPricedProduct("sale-owner1");
+    const { owner, business, product, session } = await createOwnerWithPricedProduct("sale-owner1");
 
     const sale = await sales.start(
       owner.id,
       business.id,
-      { productId: product.id, quantity: 3 },
+      { registerSessionId: session.id, productId: product.id, quantity: 3 },
       TEST_CORRELATION_ID,
     );
 
@@ -157,28 +193,44 @@ describe("Sale aggregate and state transitions", () => {
       name: "Sin precio",
       categoryId: category.id,
     });
+    const register = await registers.create(
+      owner.id,
+      business.id,
+      { name: "Register 1" },
+      TEST_CORRELATION_ID,
+    );
+    const session = await registerSessions.open(
+      owner.id,
+      business.id,
+      register.id,
+      {},
+      TEST_CORRELATION_ID,
+    );
 
     await expect(
       sales.start(
         owner.id,
         business.id,
-        { productId: product.id, quantity: 1 },
+        { registerSessionId: session.id, productId: product.id, quantity: 1 },
         TEST_CORRELATION_ID,
       ),
     ).rejects.toMatchObject({ code: "SALE_PRODUCT_HAS_NO_PRICING" });
   });
 
   it("computes a weighted line's total as price-per-kg * grams / 1000", async () => {
-    const { owner, business, product } = await createOwnerWithPricedProduct("sale-owner3", {
-      saleMode: "weighted",
-      weightUnit: "kg",
-    });
+    const { owner, business, product, session } = await createOwnerWithPricedProduct(
+      "sale-owner3",
+      {
+        saleMode: "weighted",
+        weightUnit: "kg",
+      },
+    );
     // salePrice 10000 = $100.00/kg; 750g -> $75.00 (7500).
 
     const sale = await sales.start(
       owner.id,
       business.id,
-      { productId: product.id, quantity: 750 },
+      { registerSessionId: session.id, productId: product.id, quantity: 750 },
       TEST_CORRELATION_ID,
     );
 
@@ -187,11 +239,11 @@ describe("Sale aggregate and state transitions", () => {
   });
 
   it("addLine merges a repeated unit-mode product into the existing line, keeping its original price snapshot", async () => {
-    const { owner, business, product } = await createOwnerWithPricedProduct("sale-owner4");
+    const { owner, business, product, session } = await createOwnerWithPricedProduct("sale-owner4");
     const sale = await sales.start(
       owner.id,
       business.id,
-      { productId: product.id, quantity: 1 },
+      { registerSessionId: session.id, productId: product.id, quantity: 1 },
       TEST_CORRELATION_ID,
     );
 
@@ -219,14 +271,17 @@ describe("Sale aggregate and state transitions", () => {
   });
 
   it("addLine gives each weighted-product scan its own line", async () => {
-    const { owner, business, product } = await createOwnerWithPricedProduct("sale-owner5", {
-      saleMode: "weighted",
-      weightUnit: "kg",
-    });
+    const { owner, business, product, session } = await createOwnerWithPricedProduct(
+      "sale-owner5",
+      {
+        saleMode: "weighted",
+        weightUnit: "kg",
+      },
+    );
     const sale = await sales.start(
       owner.id,
       business.id,
-      { productId: product.id, quantity: 500 },
+      { registerSessionId: session.id, productId: product.id, quantity: 500 },
       TEST_CORRELATION_ID,
     );
 
@@ -243,11 +298,11 @@ describe("Sale aggregate and state transitions", () => {
   });
 
   it("updateLineQuantity recomputes the line and sale totals", async () => {
-    const { owner, business, product } = await createOwnerWithPricedProduct("sale-owner6");
+    const { owner, business, product, session } = await createOwnerWithPricedProduct("sale-owner6");
     const sale = await sales.start(
       owner.id,
       business.id,
-      { productId: product.id, quantity: 1 },
+      { registerSessionId: session.id, productId: product.id, quantity: 1 },
       TEST_CORRELATION_ID,
     );
     const lineId = sale.lines[0]!.id;
@@ -266,11 +321,11 @@ describe("Sale aggregate and state transitions", () => {
   });
 
   it("removeLine removes only the targeted line and recomputes the total, down to zero", async () => {
-    const { owner, business, product } = await createOwnerWithPricedProduct("sale-owner7");
+    const { owner, business, product, session } = await createOwnerWithPricedProduct("sale-owner7");
     const sale = await sales.start(
       owner.id,
       business.id,
-      { productId: product.id, quantity: 1 },
+      { registerSessionId: session.id, productId: product.id, quantity: 1 },
       TEST_CORRELATION_ID,
     );
     const lineId = sale.lines[0]!.id;
@@ -288,11 +343,11 @@ describe("Sale aggregate and state transitions", () => {
   });
 
   it("rejects mutating lines once the sale is no longer in_progress", async () => {
-    const { owner, business, product } = await createOwnerWithPricedProduct("sale-owner8");
+    const { owner, business, product, session } = await createOwnerWithPricedProduct("sale-owner8");
     const sale = await sales.start(
       owner.id,
       business.id,
-      { productId: product.id, quantity: 1 },
+      { registerSessionId: session.id, productId: product.id, quantity: 1 },
       TEST_CORRELATION_ID,
     );
     await sales.cancel(owner.id, business.id, sale.id, TEST_CORRELATION_ID);
@@ -309,11 +364,11 @@ describe("Sale aggregate and state transitions", () => {
   });
 
   it("cancel transitions in_progress to cancelled and rejects a second cancel", async () => {
-    const { owner, business, product } = await createOwnerWithPricedProduct("sale-owner9");
+    const { owner, business, product, session } = await createOwnerWithPricedProduct("sale-owner9");
     const sale = await sales.start(
       owner.id,
       business.id,
-      { productId: product.id, quantity: 1 },
+      { registerSessionId: session.id, productId: product.id, quantity: 1 },
       TEST_CORRELATION_ID,
     );
 
@@ -329,11 +384,12 @@ describe("Sale aggregate and state transitions", () => {
   });
 
   it("complete transitions in_progress to completed within the caller's own transaction", async () => {
-    const { owner, business, product } = await createOwnerWithPricedProduct("sale-owner10");
+    const { owner, business, product, session } =
+      await createOwnerWithPricedProduct("sale-owner10");
     const sale = await sales.start(
       owner.id,
       business.id,
-      { productId: product.id, quantity: 1 },
+      { registerSessionId: session.id, productId: product.id, quantity: 1 },
       TEST_CORRELATION_ID,
     );
     await sales.addPayment(
@@ -352,11 +408,12 @@ describe("Sale aggregate and state transitions", () => {
   });
 
   it("rejects completing a sale with no lines", async () => {
-    const { owner, business, product } = await createOwnerWithPricedProduct("sale-owner11");
+    const { owner, business, product, session } =
+      await createOwnerWithPricedProduct("sale-owner11");
     const sale = await sales.start(
       owner.id,
       business.id,
-      { productId: product.id, quantity: 1 },
+      { registerSessionId: session.id, productId: product.id, quantity: 1 },
       TEST_CORRELATION_ID,
     );
     await sales.removeLine(owner.id, business.id, sale.id, sale.lines[0]!.id, TEST_CORRELATION_ID);
@@ -369,11 +426,12 @@ describe("Sale aggregate and state transitions", () => {
   });
 
   it("rejects completing an already-cancelled sale", async () => {
-    const { owner, business, product } = await createOwnerWithPricedProduct("sale-owner12");
+    const { owner, business, product, session } =
+      await createOwnerWithPricedProduct("sale-owner12");
     const sale = await sales.start(
       owner.id,
       business.id,
-      { productId: product.id, quantity: 1 },
+      { registerSessionId: session.id, productId: product.id, quantity: 1 },
       TEST_CORRELATION_ID,
     );
     await sales.cancel(owner.id, business.id, sale.id, TEST_CORRELATION_ID);
@@ -407,11 +465,12 @@ describe("Sale aggregate and state transitions", () => {
     });
 
     it("rejects abandoning a sale that has not yet crossed the configured threshold", async () => {
-      const { owner, business, product } = await createOwnerWithPricedProduct("sale-owner13");
+      const { owner, business, product, session } =
+        await createOwnerWithPricedProduct("sale-owner13");
       const sale = await sales.start(
         owner.id,
         business.id,
-        { productId: product.id, quantity: 1 },
+        { registerSessionId: session.id, productId: product.id, quantity: 1 },
         TEST_CORRELATION_ID,
       );
 
@@ -421,7 +480,8 @@ describe("Sale aggregate and state transitions", () => {
     });
 
     it("abandons a sale once it has sat in_progress past the business's configured threshold", async () => {
-      const { owner, business, product } = await createOwnerWithPricedProduct("sale-owner14");
+      const { owner, business, product, session } =
+        await createOwnerWithPricedProduct("sale-owner14");
       await configuration.updateSections(
         owner.id,
         business.id,
@@ -431,7 +491,7 @@ describe("Sale aggregate and state transitions", () => {
       const sale = await sales.start(
         owner.id,
         business.id,
-        { productId: product.id, quantity: 1 },
+        { registerSessionId: session.id, productId: product.id, quantity: 1 },
         TEST_CORRELATION_ID,
       );
 
@@ -448,11 +508,12 @@ describe("Sale aggregate and state transitions", () => {
     });
 
     it("rejects abandoning a sale that already completed", async () => {
-      const { owner, business, product } = await createOwnerWithPricedProduct("sale-owner15");
+      const { owner, business, product, session } =
+        await createOwnerWithPricedProduct("sale-owner15");
       const sale = await sales.start(
         owner.id,
         business.id,
-        { productId: product.id, quantity: 1 },
+        { registerSessionId: session.id, productId: product.id, quantity: 1 },
         TEST_CORRELATION_ID,
       );
       await sales.addPayment(
@@ -473,11 +534,11 @@ describe("Sale aggregate and state transitions", () => {
 
   describe("split payment settlement (SPECS.md 6.6/10.2)", () => {
     async function startTenThousandSale(emailPrefix: string) {
-      const { owner, business, product } = await createOwnerWithPricedProduct(emailPrefix);
+      const { owner, business, product, session } = await createOwnerWithPricedProduct(emailPrefix);
       const sale = await sales.start(
         owner.id,
         business.id,
-        { productId: product.id, quantity: 1 },
+        { registerSessionId: session.id, productId: product.id, quantity: 1 },
         TEST_CORRELATION_ID,
       );
       return { owner, business, sale };
@@ -697,28 +758,255 @@ describe("Sale aggregate and state transitions", () => {
     });
   });
 
+  describe("settle sales with stock and cash effects (ARCHITECTURE.md 'Financial settlement')", () => {
+    async function startTenThousandSale2(emailPrefix: string, quantity = 1) {
+      const { owner, business, product, session } = await createOwnerWithPricedProduct(emailPrefix);
+      const sale = await sales.start(
+        owner.id,
+        business.id,
+        { registerSessionId: session.id, productId: product.id, quantity },
+        TEST_CORRELATION_ID,
+      );
+      return { owner, business, product, session, sale };
+    }
+
+    it("writes a sale inventory movement per line and a net sale_settlement cash movement for cash-only payment", async () => {
+      const { owner, business, product, session, sale } = await startTenThousandSale2(
+        "sale-settle1",
+        2,
+      );
+      await sales.addPayment(
+        owner.id,
+        business.id,
+        sale.id,
+        { method: "cash", amount: 20000 },
+        TEST_CORRELATION_ID,
+      );
+
+      const settled = await sales.settle(
+        owner.id,
+        business.id,
+        sale.id,
+        { operationId: "op-settle-1" },
+        TEST_CORRELATION_ID,
+      );
+
+      expect(settled.status).toBe("completed");
+      expect(settled.changeDue).toBe(0);
+
+      const movements = await prisma.inventoryMovement.findMany({
+        where: { businessId: business.id, productId: product.id },
+      });
+      expect(movements).toHaveLength(1);
+      expect(movements[0]).toMatchObject({
+        reason: "sale",
+        quantity: -2,
+        sourceOperationId: sale.id,
+      });
+
+      const stock = await prisma.productStock.findUnique({
+        where: { productId_businessId: { productId: product.id, businessId: business.id } },
+      });
+      expect(stock?.quantityOnHand).toBe(-2);
+
+      const cashMovements = await prisma.cashMovement.findMany({
+        where: { businessId: business.id, registerSessionId: session.id },
+      });
+      expect(cashMovements).toHaveLength(1);
+      expect(cashMovements[0]).toMatchObject({ type: "sale_settlement", amount: 20000 });
+    });
+
+    it("records the net cash portion only, not the full amount tendered, when cash produces change", async () => {
+      const { owner, business, session, sale } = await startTenThousandSale2("sale-settle2");
+      await sales.addPayment(
+        owner.id,
+        business.id,
+        sale.id,
+        { method: "cash", amount: 10500 },
+        TEST_CORRELATION_ID,
+      );
+
+      const settled = await sales.settle(
+        owner.id,
+        business.id,
+        sale.id,
+        { operationId: "op-settle-2" },
+        TEST_CORRELATION_ID,
+      );
+      expect(settled.changeDue).toBe(500);
+
+      const cashMovements = await prisma.cashMovement.findMany({
+        where: { businessId: business.id, registerSessionId: session.id },
+      });
+      // The drawer only ever nets $100.00 (10000), never the $105.00
+      // tendered -- the other $5.00 goes right back out as change.
+      expect(cashMovements).toHaveLength(1);
+      expect(cashMovements[0]?.amount).toBe(10000);
+    });
+
+    it("skips the cash movement entirely when the sale was paid fully by a non-cash method", async () => {
+      const { owner, business, session, sale } = await startTenThousandSale2("sale-settle3");
+      await sales.addPayment(
+        owner.id,
+        business.id,
+        sale.id,
+        { method: "card", amount: 10000 },
+        TEST_CORRELATION_ID,
+      );
+
+      await sales.settle(
+        owner.id,
+        business.id,
+        sale.id,
+        { operationId: "op-settle-3" },
+        TEST_CORRELATION_ID,
+      );
+
+      const cashMovements = await prisma.cashMovement.findMany({
+        where: { businessId: business.id, registerSessionId: session.id },
+      });
+      expect(cashMovements).toHaveLength(0);
+    });
+
+    it("writes a sale.completed outbox event and audit record", async () => {
+      const { owner, business, sale } = await startTenThousandSale2("sale-settle4");
+      await sales.addPayment(
+        owner.id,
+        business.id,
+        sale.id,
+        { method: "cash", amount: 10000 },
+        TEST_CORRELATION_ID,
+      );
+
+      await sales.settle(
+        owner.id,
+        business.id,
+        sale.id,
+        { operationId: "op-settle-4" },
+        TEST_CORRELATION_ID,
+      );
+
+      const events = await prisma.outboxEvent.findMany({
+        where: { businessId: business.id, targetId: sale.id },
+      });
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({ eventType: "sale.completed", status: "pending" });
+
+      const auditEvents = await prisma.auditEvent.findMany({
+        where: { businessId: business.id, targetId: sale.id, action: "sale.completed" },
+      });
+      expect(auditEvents).toHaveLength(1);
+    });
+
+    it("is idempotent under an operation-ID retry: returns the same result without duplicating effects", async () => {
+      const { owner, business, product, session, sale } =
+        await startTenThousandSale2("sale-settle5");
+      await sales.addPayment(
+        owner.id,
+        business.id,
+        sale.id,
+        { method: "cash", amount: 10000 },
+        TEST_CORRELATION_ID,
+      );
+
+      const first = await sales.settle(
+        owner.id,
+        business.id,
+        sale.id,
+        { operationId: "op-settle-5" },
+        TEST_CORRELATION_ID,
+      );
+      const retried = await sales.settle(
+        owner.id,
+        business.id,
+        sale.id,
+        { operationId: "op-settle-5" },
+        TEST_CORRELATION_ID,
+      );
+
+      expect(retried).toEqual(first);
+
+      const movements = await prisma.inventoryMovement.findMany({
+        where: { businessId: business.id, productId: product.id },
+      });
+      expect(movements).toHaveLength(1);
+      const cashMovements = await prisma.cashMovement.findMany({
+        where: { businessId: business.id, registerSessionId: session.id },
+      });
+      expect(cashMovements).toHaveLength(1);
+    });
+
+    it("rejects reusing an operationId that already settled a different sale", async () => {
+      const { owner, business, product, session, sale } =
+        await startTenThousandSale2("sale-settle6");
+      await sales.addPayment(
+        owner.id,
+        business.id,
+        sale.id,
+        { method: "cash", amount: 10000 },
+        TEST_CORRELATION_ID,
+      );
+      await sales.settle(
+        owner.id,
+        business.id,
+        sale.id,
+        { operationId: "op-settle-6" },
+        TEST_CORRELATION_ID,
+      );
+
+      // A second, independent sale in the SAME business/session.
+      const secondSale = await sales.start(
+        owner.id,
+        business.id,
+        { registerSessionId: session.id, productId: product.id, quantity: 1 },
+        TEST_CORRELATION_ID,
+      );
+      await sales.addPayment(
+        owner.id,
+        business.id,
+        secondSale.id,
+        { method: "cash", amount: 10000 },
+        TEST_CORRELATION_ID,
+      );
+
+      await expect(
+        sales.settle(
+          owner.id,
+          business.id,
+          secondSale.id,
+          { operationId: "op-settle-6" },
+          TEST_CORRELATION_ID,
+        ),
+      ).rejects.toMatchObject({ code: "SALE_OPERATION_ID_REUSED" });
+    });
+  });
+
   describe("tenancy and authorization", () => {
     it("rejects starting a sale for a product that belongs to a different business", async () => {
       const { product: productA } = await createOwnerWithPricedProduct("sale-tenant-a");
-      const { owner: ownerB, business: businessB } =
-        await createOwnerWithPricedProduct("sale-tenant-b");
+      const {
+        owner: ownerB,
+        business: businessB,
+        session: sessionB,
+      } = await createOwnerWithPricedProduct("sale-tenant-b");
 
       await expect(
         sales.start(
           ownerB.id,
           businessB.id,
-          { productId: productA.id, quantity: 1 },
+          { registerSessionId: sessionB.id, productId: productA.id, quantity: 1 },
           TEST_CORRELATION_ID,
         ),
       ).rejects.toMatchObject({ code: "PRODUCT_NOT_FOUND" });
     });
 
     it("rejects reading a sale scoped to a different business", async () => {
-      const { owner, business, product } = await createOwnerWithPricedProduct("sale-tenant-c");
+      const { owner, business, product, session } =
+        await createOwnerWithPricedProduct("sale-tenant-c");
       const sale = await sales.start(
         owner.id,
         business.id,
-        { productId: product.id, quantity: 1 },
+        { registerSessionId: session.id, productId: product.id, quantity: 1 },
         TEST_CORRELATION_ID,
       );
       const { owner: strangerOwner, business: strangerBusiness } =
@@ -753,18 +1041,19 @@ describe("Sale aggregate and state transitions", () => {
         sales.start(
           employee.id,
           business.id,
-          { productId: "whatever", quantity: 1 },
+          { registerSessionId: "whatever-session", productId: "whatever", quantity: 1 },
           TEST_CORRELATION_ID,
         ),
       ).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
     });
 
     it("rejects cancelling a sale from a member without sales.cancel", async () => {
-      const { owner, business, product } = await createOwnerWithPricedProduct("sale-perm-owner2");
+      const { owner, business, product, session } =
+        await createOwnerWithPricedProduct("sale-perm-owner2");
       const sale = await sales.start(
         owner.id,
         business.id,
-        { productId: product.id, quantity: 1 },
+        { registerSessionId: session.id, productId: product.id, quantity: 1 },
         TEST_CORRELATION_ID,
       );
       const employee = await users.create({

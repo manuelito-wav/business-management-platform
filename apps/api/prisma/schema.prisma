@@ -115,6 +115,7 @@ model Business {
   saleLines          SaleLine[]
   payments           Payment[]
   cashMovements      CashMovement[]
+  outboxEvents       OutboxEvent[]
 
   @@map("businesses")
 }
@@ -578,6 +579,7 @@ model RegisterSession {
   // belonging to a different business, same pattern as Category/Product.
   register       Register       @relation(fields: [registerId, businessId], references: [id, businessId], onDelete: Cascade)
   cashMovements  CashMovement[]
+  sales          Sale[]
 
   @@unique([id, businessId])
   @@index([businessId])
@@ -740,11 +742,26 @@ model ProductExpirationBatch {
 // stock and cash effects"), which is also what actually calls
 // SalesService.complete as part of its own larger transaction.
 //
-// Deliberately NOT register/session-scoped yet -- the same reasoning
-// InventoryMovement's own doc comment already gives for deferring that
-// field to "Phase 4's sale-settlement checkpoint, the first one that
-// actually needs it": no cash/register effect exists to scope until that
-// checkpoint wires one.
+// `registerSessionId` (added at the "settle sales with stock and cash
+// effects" checkpoint, exactly the moment this doc comment always said
+// it would be) scopes the sale to the specific session that rang it up,
+// a real composite FK like RegisterSession's own register reference --
+// register sessions are not physically deleted (D-037), so there is no
+// "must outlive a deleted row" concern the way there is for
+// `actorUserId`. Set once at SalesService.start and never changed.
+//
+// `operationId` is the command-envelope idempotency key (ARCHITECTURE.md
+// "Command envelope") for the settle-sale command specifically: a client
+// retrying `POST .../complete` after a lost response (not knowing
+// whether the first attempt succeeded) supplies the same operationId and
+// gets back the exact same result rather than a "sale not in progress"
+// error or, worse, a second settlement. Null until settled; unique per
+// business once set. Deliberately not a separate general-purpose
+// idempotency ledger table (ROADMAP.md Phase 6 builds the full offline
+// command envelope/ledger for every operation type) -- this is the one
+// command in this checkpoint that needs it, and a single nullable unique
+// column here is the cheapest correct mechanism; cheap to generalize
+// later if more commands need the same pattern.
 //
 // `actorUserId` is a plain reference, not a foreign key -- same D-043
 // reasoning as AuditEvent.actorUserId/RegisterSession.userId: this row
@@ -759,11 +776,15 @@ enum SaleStatus {
 }
 
 model Sale {
-  id          String     @id
-  businessId  String     @map("business_id")
-  actorUserId String     @map("actor_user_id")
-  status      SaleStatus @default(in_progress)
-  total       Int        @default(0)
+  id                String     @id
+  businessId        String     @map("business_id")
+  registerSessionId String     @map("register_session_id")
+  actorUserId       String     @map("actor_user_id")
+  status            SaleStatus @default(in_progress)
+  total             Int        @default(0)
+
+  /// Idempotency key for the settle-sale command -- see this model's own doc comment.
+  operationId String? @map("operation_id")
 
   firstItemAt DateTime  @map("first_item_at")
   completedAt DateTime? @map("completed_at")
@@ -783,12 +804,18 @@ model Sale {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  business Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  lines    SaleLine[]
-  payments Payment[]
+  business        Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  // Composite FK, same pattern as CashMovement.registerSession.
+  registerSession RegisterSession @relation(fields: [registerSessionId, businessId], references: [id, businessId])
+  lines           SaleLine[]
+  payments        Payment[]
 
   @@unique([id, businessId])
+  // Enforces the idempotency key per business while still allowing every
+  // still-in-progress/not-yet-settled sale to share the same `null`.
+  @@unique([businessId, operationId])
   @@index([businessId, status])
+  @@index([registerSessionId])
   @@map("sales")
 }
 
@@ -958,4 +985,45 @@ model CashMovement {
   @@index([businessId])
   @@index([registerSessionId])
   @@map("cash_movements")
+}
+
+enum OutboxEventStatus {
+  pending
+  processed
+  failed
+}
+
+// ARCHITECTURE.md "Outbox": "Use a transactional outbox only for facts
+// requiring synchronization, notification, asynchronous processing, or
+// external delivery." Written within the very same transaction as the
+// fact it describes (ROADMAP.md "settle sales with stock and cash
+// effects" is its first writer, via the new OutboxService.record) --
+// never read on the POS's live operational path (D-043). `targetType`/
+// `targetId` are plain string references, the same polymorphic-fact
+// pattern AuditEvent already uses: an outbox event can describe a sale,
+// a cash movement, a cancellation, a refund, and more (D-042's own
+// list) -- never one single FK target. `payload` is a minimal snapshot
+// of whatever `eventType` needs downstream. Nothing consumes these
+// events yet -- ROADMAP.md Phase 6 ("add idempotent event sync
+// ingestion") builds the actual synchronization consumer -- so `status`
+// staying `pending` forever for now is expected, not a bug.
+model OutboxEvent {
+  id            String            @id
+  businessId    String            @map("business_id")
+  eventType     String            @map("event_type")
+  targetType    String            @map("target_type")
+  targetId      String            @map("target_id")
+  payload       Json
+  status        OutboxEventStatus @default(pending)
+  correlationId String            @map("correlation_id")
+  createdAt     DateTime          @default(now()) @map("created_at")
+  processedAt   DateTime?         @map("processed_at")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  // D-043: "outbox: status + created" -- the one query this table exists
+  // to serve (a future worker scanning for pending events to publish).
+  @@index([status, createdAt])
+  @@index([businessId])
+  @@map("outbox_events")
 }
