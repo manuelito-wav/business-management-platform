@@ -2,6 +2,7 @@ import { MiddlewareConsumer, Module, NestModule } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { AuditQueryModule } from "./audit/audit-query.module";
 import { BusinessesModule } from "./businesses/businesses.module";
+import { CashModule } from "./cash/cash.module";
 import { CatalogModule } from "./catalog/catalog.module";
 import { CorrelationIdMiddleware } from "./common/middleware/correlation-id.middleware";
 import { ConfigurationModule } from "./configuration/configuration.module";
@@ -29,6 +30,7 @@ import { SalesModule } from "./sales/sales.module";
     RegistersModule,
     InventoryModule,
     SalesModule,
+    CashModule,
   ],
 })
 export class AppModule implements NestModule {

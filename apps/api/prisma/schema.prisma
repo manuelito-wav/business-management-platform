@@ -114,6 +114,7 @@ model Business {
   sales              Sale[]
   saleLines          SaleLine[]
   payments           Payment[]
+  cashMovements      CashMovement[]
 
   @@map("businesses")
 }
@@ -572,11 +573,13 @@ model RegisterSession {
   openedAt DateTime  @default(now()) @map("opened_at")
   closedAt DateTime? @map("closed_at")
 
-  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  business       Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
   // Composite FK: prevents a session from pointing at a register
   // belonging to a different business, same pattern as Category/Product.
-  register Register @relation(fields: [registerId, businessId], references: [id, businessId], onDelete: Cascade)
+  register       Register       @relation(fields: [registerId, businessId], references: [id, businessId], onDelete: Cascade)
+  cashMovements  CashMovement[]
 
+  @@unique([id, businessId])
   @@index([businessId])
   @@index([registerId])
   @@index([userId])
@@ -885,4 +888,74 @@ model Payment {
 
   @@index([saleId])
   @@map("payments")
+}
+
+// SPECS.md 11.4's seven movement types. The first five are manually
+// recordable now (ROADMAP.md "add register cash movements":
+// CashService.recordMovement, permission-gated by cash.manage); the last
+// two exist here as the schema/type this checkpoint's own ROADMAP text
+// names, but nothing creates them yet -- `sale_settlement` and
+// `refund_reversal` are system-generated side effects of a later
+// checkpoint's own commands (ROADMAP.md "settle sales with stock and
+// cash effects" / "add audited cancellations and refunds"), which will
+// call CashService.record (the low-level, composable ledger write) from
+// within their own transaction, the same relationship
+// InventoryService.recordMovement already has with receiveStock/
+// adjustStock/recordLoss.
+enum CashMovementType {
+  deposit
+  withdrawal
+  supplier_payment
+  expense
+  opening_fund
+  sale_settlement
+  refund_reversal
+}
+
+// Append-only cash ledger (ARCHITECTURE.md "Inventory" describes the same
+// "immutable movement ledger" shape for stock; this is its cash
+// counterpart -- D-043 lists "cash movements" among the immutable
+// operational-fact tables). `amount` is a signed integer ARS minor unit
+// (D-005): positive for cash entering the drawer (deposit, opening_fund,
+// sale_settlement), negative for cash leaving it (withdrawal,
+// supplier_payment, expense, refund_reversal) -- CashService derives the
+// sign from `type`; SPECS.md 11.5's "$0 where intentionally permitted"
+// is still representable (a signed zero is exactly zero either way).
+// Explicitly scoped to one `registerSession`, not just the abstract
+// register (SPECS.md 11.5 "Register: selected from authorized available
+// registers" -- a session is which specific shift/operator that register
+// selection actually belongs to), since ROADMAP.md's later "register
+// closing and discrepancy handling" checkpoint needs to sum exactly one
+// session's own movements for its expected-vs-counted reconciliation, not
+// blend every session a register has ever had. `actorUserId` is a plain
+// reference, not a foreign key -- same D-043 reasoning as
+// AuditEvent.actorUserId/RegisterSession.userId: this row must outlive
+// the user who recorded it.
+model CashMovement {
+  id                String           @id
+  businessId        String           @map("business_id")
+  registerSessionId String           @map("register_session_id")
+  actorUserId       String           @map("actor_user_id")
+  type              CashMovementType
+
+  /// Signed integer ARS minor units (D-005) -- see this model's own doc
+  /// comment for the sign convention.
+  amount Int
+
+  /// SPECS.md 11.5 "Reason/category" -- required; distinct from `notes`
+  /// (optional, free-text) below.
+  reason String
+
+  notes String?
+
+  correlationId String   @map("correlation_id")
+  occurredAt    DateTime @default(now()) @map("occurred_at")
+
+  business        Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  // Composite FK, same pattern as SaleLine.sale.
+  registerSession RegisterSession @relation(fields: [registerSessionId, businessId], references: [id, businessId])
+
+  @@index([businessId])
+  @@index([registerSessionId])
+  @@map("cash_movements")
 }

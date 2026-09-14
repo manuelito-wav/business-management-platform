@@ -152,7 +152,35 @@ export class RegisterSessionsService {
     });
   }
 
-  private async requireInBusiness(businessId: string, sessionId: string) {
+  /**
+   * Cross-module lookup (ROADMAP.md "add register cash movements"): the
+   * same role ProductsService.findOne/RegistersService.requireInBusiness
+   * play for their own modules -- another module (cash) validates a
+   * register session exists, belongs to this business, and is currently
+   * open, without ever reading the registerSession table directly
+   * (ARCHITECTURE.md's module-boundary rule). Does not itself check
+   * membership/permission -- the caller already does that for its own
+   * action (e.g. cash.manage).
+   */
+  async requireOpenSession(businessId: string, sessionId: string) {
+    const session = await this.requireInBusiness(businessId, sessionId);
+    if (session.status !== "open") {
+      throw new AppException(
+        "REGISTER_SESSION_NOT_OPEN",
+        "This register session is not open.",
+        HttpStatus.CONFLICT,
+      );
+    }
+    return session;
+  }
+
+  /**
+   * Cross-module lookup, same role as ProductsService.findOne for other
+   * modules that need "does this session exist in this business"
+   * without caring about its open/closed status (e.g. CashService.list
+   * reading an already-closed session's historical movements).
+   */
+  async requireInBusiness(businessId: string, sessionId: string) {
     const session = await this.prisma.registerSession.findUnique({ where: { id: sessionId } });
     if (!session || session.businessId !== businessId) {
       throw new AppException(

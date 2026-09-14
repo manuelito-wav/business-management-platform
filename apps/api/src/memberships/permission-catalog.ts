@@ -95,6 +95,13 @@ export const PERMISSION_CATALOG: readonly PermissionDefinition[] = [
     description:
       "Set and change a product's cost, sale price, profit, and Margin %, and manage optional price lists.",
   },
+  {
+    code: "cash.manage",
+    module: "cash",
+    action: "manage",
+    description:
+      "Record cash deposits, withdrawals, supplier payments, expenses, and opening funds for a register session.",
+  },
 ];
 
 export interface PredefinedRoleDefinition {
@@ -140,6 +147,7 @@ export const PREDEFINED_ROLES: readonly PredefinedRoleDefinition[] = [
       "sales.refund",
       "catalog.manage",
       "pricing.manage",
+      "cash.manage",
     ],
   },
   { name: "Employee", permissionCodes: ["sales.create"] },
