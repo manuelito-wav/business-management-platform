@@ -294,7 +294,7 @@ first end-to-end operational slice.
   fund as auditable cash ledger entries, including the sale-settlement and
   refund-reversal movement types defined in SPECS.md §11.4; include allowed
   zero amounts, reason, actor, register, automatic time, and optional notes.
-  - Commit: `feat: add register cash movements`
+  - Commit: `feat: add register cash movements` -- done (fb9fbed)
 - Implement one transactional `complete sale` command that idempotently writes
   sale, payments, sale inventory movements, cash effect for cash payments,
   audit record, and outbox event. Return the same result on an operation-ID
