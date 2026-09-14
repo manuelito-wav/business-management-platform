@@ -305,7 +305,7 @@ first end-to-end operational slice.
   re-establishment requirement for affected users. Until the formal
   notification module lands (Phase 8), deliver the notification trigger as a
   direct in-app signal rather than a persisted notification record.
-  - Commit: `feat: add register closing and discrepancy handling`
+  - Commit: `feat: add register closing and discrepancy handling` -- done (88fac98)
 - Add acceptance coverage for the register-conflict scenario: when Employee A
   has an active Register 2 session and Employee B attempts to close Register 2,
   detect the active association; show an authorized user a clear conflict
