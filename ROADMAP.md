@@ -313,7 +313,7 @@ first end-to-end operational slice.
   notify Employee A; and require Employee A to establish an appropriate
   register session before future operations. Employee A's unfinished sale tabs
   must remain recoverable through the draft model, not be silently lost.
-  - Commit: `test: cover register conflict and draft recovery`
+  - Commit: `test: cover register conflict and draft recovery` -- done (bbd7a93)
 - Add permission-scoped sales history and a critical Playwright journey: login,
   select register, scan/search, weighted item, split charge, and completed
   receipt view.
